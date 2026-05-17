@@ -1,0 +1,20 @@
+# Auto-detect text files and normalize LF in the repo
+* text=auto
+
+# Force LF for these types (cross-platform consistency)
+*.cs    text eol=lf
+*.tsx   text eol=lf
+*.ts    text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.css   text eol=lf
+*.mjs   text eol=lf
+*.csproj text eol=lf
+*.sln   text eol=lf
+
+# Binary files — no line ending conversion
+*.ico   binary
+*.png   binary
+*.jpg   binary
+*.svg   text eol=lf
+*.db    binary
