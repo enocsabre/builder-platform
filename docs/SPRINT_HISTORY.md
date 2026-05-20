@@ -353,6 +353,70 @@ Estado compartido: `vsCodeLoading` (spinner mientras lanza) + `vsCodeError` (men
 
 ---
 
+## Sprint 18 — Generated Product Auth & Data Persistence MVP
+
+**Objetivo**: Transición de productos generados de "demo-ready visual" a "usable con login y datos persistentes".
+
+### Auth system generado
+
+`middleware.ts` en la raíz del frontend generado — protege todas las rutas excepto `/login` y `/api/auth/*`:
+- Redirect 307 a `/login` para páginas no autenticadas
+- 401 JSON para API calls no autenticadas
+- Redirect a `/dashboard` si cookie válida intenta acceder a `/login`
+
+Cookie `bp-session` (httpOnly, 7 días, sameSite: lax) — seteada por `/api/auth/login`, limpiada por `/api/auth/logout`.
+
+### Demo credentials
+
+`demoEmail = admin@{slug}.com` / `demoPassword = "Demo1234!"` — generadas en `ScaffoldEngine.GenerateFrontend()` y embedidas en `LoginPage`, `ApiAuthLoginRoute`. Visibles en la pantalla de login (credentials box encima del form).
+
+### JSON persistence
+
+`/api/data/[module]/route.ts` — dynamic route handler:
+- `GET`: lee `.data/{module}.json` (cwd-relative), devuelve `[]` si no existe
+- `POST`: append record con `id: Date.now()`, `_createdAt: ISO`, persiste en `.data/{module}.json`
+- Sanitiza nombre del módulo: `/[^a-z0-9-]/g` + `slice(0, 50)` contra path traversal
+- **Next.js 15**: `params` es `Promise<{module: string}>` — requiere `await context.params`
+
+`.data/` en `.gitignore` generado — los archivos de datos no se versionan.
+
+### AppShell + Server/Client boundary
+
+`AppShell.tsx` (client component) recibe `sidebar` como `React.ReactNode` desde el server `RootLayout`. Patrón necesario porque Sidebar es server component y AppShell necesita `usePathname` para ocultar sidebar en `/login`.
+
+```tsx
+// RootLayout (server):
+<AppShell sidebar={<Sidebar />}>{children}</AppShell>
+
+// AppShell (client):
+if (pathname === "/login") return <>{children}</>  // sin sidebar
+```
+
+### CRUD Modal en feature pages
+
+Cada feature page generada incluye:
+- `savedRows` state cargado desde `/api/data/{route}` en mount (useEffect + useCallback)
+- Botón "Nuevo {Title}" en el header del módulo
+- Modal con form: un `<input>` por columna (excepto la columna de status)
+- POST a `/api/data/{route}` → reload
+- Demo rows se renderizan al 40% de opacidad con separador "Datos demo" cuando hay savedRows
+
+### Logout
+
+Sidebar incluye botón "Cerrar sesión" (bottom): `POST /api/auth/logout` → `window.location.href = "/login"`.
+
+**E2E validado** (2026-05-20):
+- Unauthenticated /dashboard → 307 /login ✓
+- Login admin@s18restaurantauth.com / Demo1234! → 200 ok + cookie ✓
+- Authenticated /dashboard → 200 ✓
+- Unauthenticated /api/data/mesas → 401 ✓
+- POST record → 201 + JSON en disco ✓
+- GET después de POST → record persiste ✓
+- Logout → cookie cleared → /dashboard → 307 /login ✓
+- `tsc --noEmit` 0 errores ✓ · `next build` limpio (13 rutas) ✓
+
+---
+
 ## Deuda técnica activa
 
 | Item | Prioridad | Descripción |
@@ -363,6 +427,8 @@ Estado compartido: `vsCodeLoading` (spinner mientras lanza) + `vsCodeError` (men
 | Pluralización irregular | Baja | Category→categories, Company→companies no manejado en ResolveRoute |
 | dashboard_premium idempotencia | Baja | Se aplica en cada request sin check |
 | SSE step coverage en HandleValidation/HandleDeploy | Baja | Pings OK, pero sin StepAsync en esos flujos |
+| Auth multi-user / roles | Media | Actualmente single demo user — un solo credential hardcoded por producto |
+| CRUD delete action | Baja | Solo create + read; no hay delete de registros persistidos |
 
 ## Regla de oro del Builder Platform
 
