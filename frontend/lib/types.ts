@@ -2,6 +2,9 @@ export type ProductStatus =
   | "Draft" | "Discovering" | "Architecting" | "Planning"
   | "Building" | "Reviewing" | "Stable" | "Error";
 
+export type DeployStatus =
+  | "not_deployed" | "preparing" | "building" | "deploying" | "deployed" | "failed" | "recovering";
+
 export type RuntimePhase =
   | "idle" | "queued" | "discovery" | "architecting" | "planning"
   | "waiting_approval" | "building" | "reviewing";
@@ -31,6 +34,22 @@ export interface GateResult {
   skipped:  boolean;
   message:  string;
   detail:   string | null;
+}
+
+export interface DeployRunSummary {
+  id:         string;
+  status:     string;
+  startedAt:  string;
+  finishedAt: string | null;
+  deployUrl:  string | null;
+  commitHash: string | null;
+  branch:     string | null;
+}
+
+export interface DeployRunDetail extends DeployRunSummary {
+  logs:        string | null;
+  errors:      string | null;
+  gateResults: GateResult[];
 }
 
 export interface ValidationRunSummary {
@@ -63,6 +82,9 @@ export interface ProductSummary {
   runtimeHealth:  RuntimeHealth;
   createdAt:      string;
   updatedAt:      string;
+  deployStatus:   DeployStatus;
+  deployUrl:      string | null;
+  deployedAt:     string | null;
 }
 
 export interface Message {
@@ -167,6 +189,9 @@ export interface ProductDetail extends ProductSummary {
   modules:              ProductModule[];
   fileRevisions:        FileRevision[];
   validationRuns:       ValidationRunSummary[];
+  deployCommitHash:     string | null;
+  deployBranch:         string | null;
+  deployRuns:           DeployRunSummary[];
 }
 
 export const PROCESSING_STATUSES: ProductStatus[] = ["Discovering", "Architecting", "Planning"];

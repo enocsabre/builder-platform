@@ -16,6 +16,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ProductModule>  ProductModules   => Set<ProductModule>();
     public DbSet<FileRevision>   FileRevisions    => Set<FileRevision>();
     public DbSet<ValidationRun>  ValidationRuns   => Set<ValidationRun>();
+    public DbSet<DeployRun>      DeployRuns       => Set<DeployRun>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -32,6 +33,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(p => p.PreviewUrl).HasMaxLength(200);
             e.Property(p => p.PreviewError).HasMaxLength(500);
             e.Property(p => p.RuntimeHealth).HasMaxLength(20).HasDefaultValue("healthy");
+            e.Property(p => p.DeployStatus).HasMaxLength(20).HasDefaultValue("not_deployed");
+            e.Property(p => p.DeployUrl).HasMaxLength(300);
+            e.Property(p => p.DeployLogs).HasMaxLength(3000);
+            e.Property(p => p.DeployCommitHash).HasMaxLength(60);
+            e.Property(p => p.DeployBranch).HasMaxLength(100);
             e.HasMany(p => p.Messages).WithOne(m => m.Product).HasForeignKey(m => m.ProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(p => p.ActivityEvents).WithOne(a => a.Product).HasForeignKey(a => a.ProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(p => p.Approvals).WithOne(a => a.Product).HasForeignKey(a => a.ProductId).OnDelete(DeleteBehavior.Cascade);
@@ -39,6 +45,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasMany(p => p.Artifacts).WithOne(a => a.Product).HasForeignKey(a => a.ProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(p => p.ScaffoldEntries).WithOne(s => s.Product).HasForeignKey(s => s.ProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(p => p.Modules).WithOne(m => m.Product).HasForeignKey(m => m.ProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(p => p.DeployRuns).WithOne(d => d.Product).HasForeignKey(d => d.ProductId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<ChatMessage>(e =>
@@ -129,6 +136,19 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(r => r.Logs).HasMaxLength(3000);
             e.Property(r => r.Errors).HasMaxLength(2000);
             e.HasOne(r => r.Product).WithMany(p => p.ValidationRuns).HasForeignKey(r => r.ProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(r => r.ProductId);
+        });
+
+        modelBuilder.Entity<DeployRun>(e =>
+        {
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Status).IsRequired().HasMaxLength(20).HasDefaultValue("running");
+            e.Property(r => r.Logs).HasMaxLength(5000);
+            e.Property(r => r.Errors).HasMaxLength(2000);
+            e.Property(r => r.DeployUrl).HasMaxLength(300);
+            e.Property(r => r.CommitHash).HasMaxLength(60);
+            e.Property(r => r.Branch).HasMaxLength(100);
+            e.HasOne(r => r.Product).WithMany(p => p.DeployRuns).HasForeignKey(r => r.ProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(r => r.ProductId);
         });
     }

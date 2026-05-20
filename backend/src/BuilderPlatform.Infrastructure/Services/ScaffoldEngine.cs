@@ -112,7 +112,7 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
 
         foreach (var feature in profile.CoreFeatures.Take(5))
             WriteFile(Path.Combine(appRoot, ToRoute(feature)), "page.tsx",
-                FeaturePage(feature, ToRoute(feature)), "typescript", entries, ref order);
+                FeaturePage(feature, ToRoute(feature), profile), "typescript", entries, ref order);
 
         var componentsRoot = Path.Combine(feRoot, "components");
         WriteFile(componentsRoot, "Sidebar.tsx",       SidebarServer(displayName),       "typescript", entries, ref order);
@@ -123,6 +123,12 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         WriteFile(libRoot, "types.ts",  LibTypes(profile), "typescript", entries, ref order);
         WriteFile(libRoot, "api.ts",    LibApi(),          "typescript", entries, ref order);
         WriteFile(libRoot, "utils.ts",  LibUtils(),        "typescript", entries, ref order);
+
+        // Registry seed — entity labels for human-readable sidebar nav
+        var ctx        = ContentGenerator.GetDomainContext(profile.Industry);
+        var labelsJson = System.Text.Json.JsonSerializer.Serialize(
+            ctx.EntityLabels, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        WriteFile(Path.Combine(feRoot, "registry"), "entity-labels.json", labelsJson, "json", entries, ref order);
     }
 
     // ── Docs scaffold ──────────────────────────────────────────────────────────
@@ -373,7 +379,7 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
             "type-check": "tsc --noEmit"
           },
           "dependencies": {
-            "next": "15.3.0",
+            "next": "15.3.9",
             "react": "^19.0.0",
             "react-dom": "^19.0.0",
             "lucide-react": "^0.511.0"
@@ -514,32 +520,73 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
 
     private static string DashboardPage(string displayName, ProductProfile profile)
     {
-        var statsArr = string.Join(",\n  ", profile.DbEntities.Take(4)
-            .Select(e => $"{{ label: \"Total {e}\", value: \"—\" }}"));
+        var ctx = ContentGenerator.GetDomainContext(profile.Industry);
+
+        var kpisJs = string.Join(",\n    ", ctx.Kpis.Select(k =>
+            $"{{ label: \"{EscapeJs(k.Label)}\", value: \"{EscapeJs(k.Value)}\", trend: \"{EscapeJs(k.Trend)}\", trendColor: \"{k.TrendColor}\" }}"));
+
+        var activityJs = string.Join(",\n    ", ctx.RecentActivity.Select(r =>
+            $"{{ desc: \"{EscapeJs(r.Description)}\", when: \"{EscapeJs(r.When)}\", status: \"{EscapeJs(r.Status)}\", statusBg: \"{StatusBgVar(r.StatusColor)}\", statusColor: \"{StatusTextVar(r.StatusColor)}\" }}"));
+
         return
             """
             export default function DashboardPage() {
-              const stats = [__STATS__];
+              const kpis = [
+                __KPIS__
+              ];
+              const activity = [
+                __ACTIVITY__
+              ];
               return (
-                <div style={{ padding: "28px" }}>
-                  <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "24px" }}>
-                    __DISPLAY_NAME__ — Dashboard
-                  </h1>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "16px", marginBottom: "32px" }}>
-                    {stats.map((s) => (
-                      <div key={s.label} style={{ padding: "20px", background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)" }}>
-                        <p style={{ fontSize: "11px", color: "var(--foreground-muted)", marginBottom: "8px", textTransform: "uppercase" }}>{s.label}</p>
-                        <p style={{ fontSize: "28px", fontWeight: "700", color: "var(--status-info-text)" }}>{s.value}</p>
+                <div style={{ padding: "28px", maxWidth: "1200px" }}>
+                  <div style={{ marginBottom: "32px" }}>
+                    <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>
+                      __DISPLAY_NAME__
+                    </h1>
+                    <p style={{ fontSize: "13px", color: "var(--foreground-muted)" }}>Panel de control · actualizado ahora</p>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "16px", marginBottom: "32px" }}>
+                    {kpis.map((kpi) => (
+                      <div key={kpi.label} style={{ padding: "22px", background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)" }}>
+                        <p style={{ fontSize: "11px", fontWeight: "500", color: "var(--foreground-muted)", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.06em" }}>{kpi.label}</p>
+                        <p style={{ fontSize: "26px", fontWeight: "700", color: "var(--foreground)", marginBottom: "6px", letterSpacing: "-0.02em" }}>{kpi.value}</p>
+                        <p style={{ fontSize: "11px", color: kpi.trendColor }}>{kpi.trend}</p>
                       </div>
                     ))}
                   </div>
-                  <div style={{ padding: "24px", background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", textAlign: "center" }}>
-                    <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>Sprint 1 en construcción</p>
+
+                  <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
+                    <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: "14px", fontWeight: "600", color: "var(--foreground)" }}>Actividad reciente</span>
+                      <span style={{ fontSize: "11px", color: "var(--muted)", padding: "3px 10px", borderRadius: "99px", background: "var(--surface-elevated)", border: "1px solid var(--border)" }}>Datos demo</span>
+                    </div>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ background: "var(--surface-elevated)" }}>
+                          <th style={{ padding: "10px 20px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Descripción</th>
+                          <th style={{ padding: "10px 20px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Cuándo</th>
+                          <th style={{ padding: "10px 20px", textAlign: "right", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activity.map((row, i) => (
+                          <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
+                            <td style={{ padding: "13px 20px", fontSize: "13px", color: "var(--foreground)" }}>{row.desc}</td>
+                            <td style={{ padding: "13px 20px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.when}</td>
+                            <td style={{ padding: "13px 20px", textAlign: "right" }}>
+                              <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: row.statusBg, color: row.statusColor }}>{row.status}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               );
             }
-            """.Replace("__STATS__", statsArr)
+            """.Replace("__KPIS__", kpisJs)
+               .Replace("__ACTIVITY__", activityJs)
                .Replace("__DISPLAY_NAME__", displayName);
     }
 
@@ -587,18 +634,135 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         }
         """.Replace("__DISPLAY_NAME__", displayName);
 
-    private static string FeaturePage(string feature, string route) =>
+    private static string FeaturePage(string feature, string route, ProductProfile profile)
+    {
+        var template = ContentGenerator.GetModuleTemplate(feature, route, profile.Industry);
+        if (template is null)
+            return GenericFeaturePage(feature, route);
+
+        var colsJs = string.Join(", ", template.Columns.Select(c => $"\"{EscapeJs(c)}\""));
+        var rowsJs = string.Join(",\n      ", template.Rows.Select(r =>
+        {
+            var cells = string.Join(", ", r.Cells.Select(c => $"\"{EscapeJs(c)}\""));
+            return $"{{ cells: [{cells}], sc: \"{r.StatusColor}\" }}";
+        }));
+
+        return
+            """
+            export default function __PASCAL__Page() {
+              const config = {
+                title: "__TITLE__",
+                action: "__ACTION__",
+                kpiBar: "__KPI_BAR__",
+                statusCol: __STATUS_COL__ as number,
+                cols: [__COLS__],
+                rows: [
+                  __ROWS__
+                ] as { cells: string[]; sc: string }[],
+              };
+              const bg   = (c: string): string =>
+                c === "active" ? "var(--status-active-bg)"   :
+                c === "warn"   ? "var(--status-warn-bg)"     :
+                c === "danger" ? "var(--status-danger-bg)"   : "var(--status-info-bg)";
+              const text = (c: string): string =>
+                c === "active" ? "var(--status-active-text)" :
+                c === "warn"   ? "var(--status-warn-text)"   :
+                c === "danger" ? "var(--status-danger-text)" : "var(--status-info-text)";
+              return (
+                <div style={{ padding: "28px" }}>
+                  <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>{config.title}</h1>
+                      <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>{config.kpiBar}</p>
+                    </div>
+                    <button style={{ padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                      {config.action}
+                    </button>
+                  </div>
+                  <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ background: "var(--surface-elevated)", borderBottom: "1px solid var(--border)" }}>
+                          {config.cols.map((col) => (
+                            <th key={col} style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {config.rows.map((row, ri) => (
+                          <tr key={ri} style={{ borderTop: "1px solid var(--border)" }}>
+                            {row.cells.map((cell, ci) => (
+                              <td key={ci} style={{ padding: "13px 16px" }}>
+                                {config.statusCol >= 0 && ci === config.statusCol ? (
+                                  <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: text(row.sc) }}>{cell}</span>
+                                ) : (
+                                  <span style={{ fontSize: ci === 0 ? "13px" : "12px", fontWeight: ci === 0 ? "500" : "400", color: ci === 0 ? "var(--foreground)" : "var(--foreground-muted)" }}>{cell}</span>
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            }
+            """.Replace("__PASCAL__",     ToPascalCase(route))
+               .Replace("__TITLE__",      EscapeJs(template.Title))
+               .Replace("__ACTION__",     EscapeJs(template.ActionLabel))
+               .Replace("__KPI_BAR__",    EscapeJs(template.KpiBar))
+               .Replace("__STATUS_COL__", template.StatusColumnIndex.ToString())
+               .Replace("__COLS__",       colsJs)
+               .Replace("__ROWS__",       rowsJs);
+    }
+
+    private static string GenericFeaturePage(string feature, string route) =>
         ("""
         export default function __PASCAL__Page() {
+          const rows = [
+            { name: "Demo Item 1", status: "Activo",     date: "2026-05-15", sc: "active" },
+            { name: "Demo Item 2", status: "Pendiente",  date: "2026-05-14", sc: "warn" },
+            { name: "Demo Item 3", status: "Completado", date: "2026-05-13", sc: "info" },
+          ];
+          const bg   = (c: string) => c === "active" ? "var(--status-active-bg)"   : c === "warn" ? "var(--status-warn-bg)"   : "var(--status-info-bg)";
+          const text = (c: string) => c === "active" ? "var(--status-active-text)" : c === "warn" ? "var(--status-warn-text)" : "var(--status-info-text)";
           return (
             <div style={{ padding: "28px" }}>
-              <div style={{ marginBottom: "24px" }}>
-                <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)" }}>__FEATURE__</h1>
-                <p style={{ color: "var(--foreground-muted)", marginTop: "4px", fontSize: "13px" }}>Módulo en construcción · Sprint 1</p>
+              <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>__FEATURE__</h1>
+                  <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>Módulo generado · conectá con la API para datos reales</p>
+                </div>
+                <button style={{ padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                  Nuevo
+                </button>
               </div>
-              <div style={{ padding: "48px", textAlign: "center", background: "var(--surface)", borderRadius: "12px", border: "1px dashed var(--border)" }}>
-                <p style={{ fontSize: "14px", color: "var(--foreground-muted)" }}>Este módulo será implementado en el próximo sprint.</p>
-                <p style={{ fontSize: "12px", color: "var(--muted)", marginTop: "8px" }}>Ruta: /__ROUTE__</p>
+              <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "var(--surface-elevated)", borderBottom: "1px solid var(--border)" }}>
+                      <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Nombre</th>
+                      <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estado</th>
+                      <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Fecha</th>
+                      <th style={{ padding: "12px 16px", textAlign: "right", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr key={row.name} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td style={{ padding: "14px 16px", fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{row.name}</td>
+                        <td style={{ padding: "14px 16px" }}>
+                          <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: text(row.sc) }}>{row.status}</span>
+                        </td>
+                        <td style={{ padding: "14px 16px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.date}</td>
+                        <td style={{ padding: "14px 16px", textAlign: "right" }}>
+                          <button style={{ fontSize: "12px", color: "var(--accent)", background: "none", border: "none", cursor: "pointer" }}>Editar</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           );
@@ -865,6 +1029,27 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
     private static bool ContainsAny(string text, params string[] terms) =>
         terms.Any(text.Contains);
 
+    private static string EscapeJs(string s) =>
+        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+    private static string StatusBgVar(string color) => color switch
+    {
+        "active" => "var(--status-active-bg)",
+        "warn"   => "var(--status-warn-bg)",
+        "info"   => "var(--status-info-bg)",
+        "danger" => "var(--status-danger-bg)",
+        _        => "var(--surface-elevated)",
+    };
+
+    private static string StatusTextVar(string color) => color switch
+    {
+        "active" => "var(--status-active-text)",
+        "warn"   => "var(--status-warn-text)",
+        "info"   => "var(--status-info-text)",
+        "danger" => "var(--status-danger-text)",
+        _        => "var(--foreground-muted)",
+    };
+
     // ── Delta / incremental generation ────────────────────────────────────────
 
     public async Task<IReadOnlyList<ScaffoldChange>> GenerateDeltaAsync(
@@ -1114,15 +1299,15 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         .Replace("__FEATURE__", featureName)
         .Replace("__ROUTE__", route);
 
-    // Feature name → URL route (e.g. "Gestión de Alertas" → "alertas")
+    // Feature name → URL route (e.g. "Facturación" → "facturacion")
     private static string ToDeltaRoute(string featureName)
     {
+        // Normalize accents first so the final regex doesn't silently drop them
         var lower = featureName.ToLowerInvariant()
-            .Replace("gestión de ", "").Replace("gestión ", "")
-            .Replace("módulo de ", "").Replace("módulo ", "");
-        var first = Regex.Replace(lower, @"[^a-záéíóúüñ\s-]", "")
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault(w => w.Length >= 3) ?? Regex.Replace(lower, @"\s+", "-").Trim('-');
+            .Replace("á", "a").Replace("é", "e").Replace("í", "i").Replace("ó", "o").Replace("ú", "u")
+            .Replace("ñ", "n").Replace("ü", "u");
+        var first = lower.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(w => w.Length >= 3) ?? lower;
         return Regex.Replace(first, @"[^a-z0-9-]", "");
     }
 }

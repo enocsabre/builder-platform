@@ -23,6 +23,7 @@ export const api = {
     delete:        (id: string)                        => request<void>(`/api/products/${id}`, { method: "DELETE" }),
     setStatus:     (id: string, status: string)        => request<ProductSummary>(`/api/products/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),
     setPreviewUrl: (id: string, url: string | null)    => request<ProductSummary>(`/api/products/${id}/preview-url`, { method: "PATCH", body: JSON.stringify({ previewUrl: url }) }),
+    openVSCode:    (id: string)                        => request<{ message: string; path: string }>(`/api/products/${id}/open-vscode`, { method: "POST" }),
   },
   messages: {
     send: (productId: string, content: string) =>

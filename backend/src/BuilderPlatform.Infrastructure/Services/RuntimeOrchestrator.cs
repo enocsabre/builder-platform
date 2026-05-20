@@ -10,7 +10,7 @@ namespace BuilderPlatform.Infrastructure.Services;
 
 public record RuntimeWork(string Type, Guid ProductId, string? Payload = null);
 
-public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<RuntimeOrchestrator> logger, ScaffoldEngine scaffoldEngine, ProjectAwarenessEngine awarenessEngine, RuntimePatchEngine patchEngine, PreviewRunner previewRunner, RuntimeValidationEngine validationEngine, AutofixEngine autofixEngine)
+public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<RuntimeOrchestrator> logger, ScaffoldEngine scaffoldEngine, ProjectAwarenessEngine awarenessEngine, RuntimePatchEngine patchEngine, PreviewRunner previewRunner, RuntimeValidationEngine validationEngine, AutofixEngine autofixEngine, DeployEngine deployEngine, RuntimeEventBus bus)
     : BackgroundService
 {
     private readonly Channel<RuntimeWork> _queue =
@@ -42,6 +42,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
             logger.LogWarning("Startup cleanup: aborted {Runs} stale runs, reset {Products} stale products",
                 staleRuns.Count, staleProducts.Count);
         }
+        await previewRunner.StartupCleanupAsync();
         await base.StartAsync(ct);
     }
 
@@ -73,6 +74,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         "dashboard_update"  => HandleDashboardUpdate(work.ProductId, work.Payload, db, ct),
         "ui_evolution"      => HandleUiEvolution(work.ProductId, work.Payload, db, ct),
         "validation"        => HandleValidation(work.ProductId, db, ct),
+        "deploy"            => HandleDeploy(work.ProductId, db, ct),
         _                   => Task.CompletedTask,
     };
 
@@ -91,6 +93,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
             $"Analizando: {product.Prompt[..Math.Min(product.Prompt.Length, 80)]}");
         AddRuntimeMessage(db, productId, "Entendido. Estoy analizando tu idea. Iniciando proceso de discovery para identificar el dominio, usuarios y features clave...");
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
 
         await Task.Delay(3500, ct);
 
@@ -113,6 +116,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         AddRuntimeMessage(db, productId, ContentGenerator.GenerateRuntimeChatBrief(product.Name, profile));
         product.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
 
         await Task.Delay(4000, ct);
 
@@ -162,6 +166,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         product.RuntimePhase = "waiting_approval";
         product.UpdatedAt    = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
     }
 
     // ── Approval resolved ──────────────────────────────────────────────────────
@@ -241,6 +246,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         product.RuntimePhase = "waiting_approval";
         product.UpdatedAt    = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
     }
 
     private async Task ContinueToBuilding(Product product, Guid productId, AppDbContext db, CancellationToken ct)
@@ -263,6 +269,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         product.RuntimePhase = "building";
         product.UpdatedAt    = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
 
         // Kick off scaffold generation asynchronously (next queue item)
         Enqueue(new RuntimeWork("scaffold", productId));
@@ -287,6 +294,8 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
             $"{profile.DbEntities.Length} entidades · {profile.CoreFeatures.Length} módulos · Clean Architecture");
         AddRuntimeMessage(db, productId, ContentGenerator.GenerateRuntimeChatScaffolding(product.Name, profile));
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
+        await bus.StepAsync(productId, "Generando backend (.NET 9)...");
 
         await Task.Delay(2000, ct);
 
@@ -294,6 +303,8 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         AddActivity(db, productId, ActivityType.ScaffoldStarted, "Generando scaffold backend",
             $".NET 9 · {Math.Min(profile.DbEntities.Length, 8)} entidades · {Math.Min(profile.DbEntities.Length, 5)} controllers");
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
+        await bus.StepAsync(productId, "Generando frontend (Next.js 15)...");
 
         await Task.Delay(2500, ct);
 
@@ -301,6 +312,8 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         AddActivity(db, productId, ActivityType.ScaffoldStarted, "Generando scaffold frontend",
             $"Next.js 15 · {Math.Min(profile.CoreFeatures.Length, 5)} módulos · Operational Dark design system");
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
+        await bus.StepAsync(productId, "Escribiendo archivos en disco...");
 
         await Task.Delay(2000, ct);
 
@@ -348,6 +361,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         }
 
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
     }
 
     // ── Message intent handler ─────────────────────────────────────────────────
@@ -501,6 +515,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
 
         product.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
     }
 
     // ── Feature execution (Bundle) ─────────────────────────────────────────────
@@ -521,6 +536,8 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         AddActivity(db, productId, ActivityType.ScaffoldDeltaStarted, $"Feature bundle iniciado: {featureName}",
             "Generando módulo completo: entidad, controller, página, nav, registry, widget");
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
+        await bus.StepAsync(productId, $"Generando módulo: {featureName}...");
 
         await Task.Delay(2000, ct);
 
@@ -544,6 +561,8 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
             if (frontendFiles.Count > 0)
                 AddActivity(db, productId, ActivityType.FrontendModuleGenerated, $"Frontend generado: {featureName}",
                     string.Join(", ", frontendFiles.Select(c => Path.GetFileName(c.TargetPath))));
+
+            await bus.StepAsync(productId, $"Código generado — actualizando navegación...");
 
             // ── 2. Navigation registry ─────────────────────────────────────────
             var route   = ToDeltaRoute(featureName!);
@@ -598,6 +617,8 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
                 }
             }
 
+            await bus.StepAsync(productId, $"Actualizando registry y dashboard...");
+
             // ── 4. Module registry (modules.json) ──────────────────────────────
             await awarenessEngine.RegisterDeltaModuleAsync(product, featureName!, db, codeChanges, ct);
             var regPath = Path.Combine(product.ProjectPath!, "frontend", "registry", "modules.json");
@@ -644,6 +665,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         product.RuntimePhase = "building";
         product.UpdatedAt    = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
     }
 
     // ── Dashboard update ───────────────────────────────────────────────────────
@@ -737,6 +759,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         product.RuntimePhase = "building";
         product.UpdatedAt    = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
     }
 
     // ── UI Evolution ──────────────────────────────────────────────────────────
@@ -829,6 +852,7 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         product.RuntimePhase = "building";
         product.UpdatedAt    = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
     }
 
     // ── Validation + Autofix ──────────────────────────────────────────────────
@@ -946,10 +970,170 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         else AddRuntimeMessage(db, productId, msgContent);
 
         await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
 
         logger.LogInformation(
             "ValidationRun {RunId}: {Status} | passed={Passed} failed={Failed} autofixes={Fixes}",
             run.Id, run.Status, totalPassed, totalFailed, run.AutofixAttempts);
+    }
+
+    // ── Deploy Pipeline ───────────────────────────────────────────────────────
+
+    private async Task HandleDeploy(Guid productId, AppDbContext db, CancellationToken ct)
+    {
+        var product = await db.Products.FindAsync([productId], ct);
+        if (product is null) return;
+
+        // ── Safety checks ─────────────────────────────────────────────────────
+        if (product.ScaffoldStatus != "complete" || string.IsNullOrWhiteSpace(product.ProjectPath))
+        {
+            AddRuntimeMessage(db, productId, "Deploy cancelado: el scaffold debe estar completo antes de poder deployar.");
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+
+        if (product.RuntimeHealth == "broken")
+        {
+            AddRuntimeMessage(db, productId,
+                "Deploy cancelado: el runtime health es **broken**. Ejecutá `valida el proyecto` y resolvé los problemas primero.");
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+
+        if (product.DeployStatus is "preparing" or "building" or "deploying")
+        {
+            AddRuntimeMessage(db, productId, "Ya hay un deploy en progreso. Esperá a que termine antes de iniciar otro.");
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+
+        // ── Create DeployRun ──────────────────────────────────────────────────
+        var (commitHash, branch) = await deployEngine.GetGitInfoAsync(product.ProjectPath, ct);
+
+        var run = new DeployRun
+        {
+            ProductId  = productId,
+            CommitHash = commitHash,
+            Branch     = branch,
+        };
+        db.DeployRuns.Add(run);
+
+        product.DeployStatus = "preparing";
+        product.IsProcessing = true;
+        product.UpdatedAt    = DateTime.UtcNow;
+
+        AddActivity(db, productId, ActivityType.DeployStarted, "Deploy iniciado",
+            $"branch: {branch ?? "unknown"} · commit: {commitHash ?? "unknown"}");
+        AddRuntimeMessage(db, productId, ContentGenerator.GenerateDeployStart());
+        await db.SaveChangesAsync(ct);
+
+        // ── Pre-deploy gates (includes next_build — runs `npx next build`) ────
+        AddActivity(db, productId, ActivityType.DeployBuildStarted, "Pre-deploy gates iniciados",
+            "Ejecutando 8 quality gates + next build (puede tomar hasta 5 min)...");
+        product.DeployStatus = "building";
+        product.UpdatedAt    = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        var (gates, allPassed, gateLogs) = await deployEngine.RunPreDeployGatesAsync(product, ct);
+
+        run.GateResults = System.Text.Json.JsonSerializer.Serialize(
+            gates.Select(g => new { g.Gate, g.Category, g.Passed, g.Skipped, g.Message, g.Detail }));
+
+        if (!allPassed)
+        {
+            var failed  = gates.Where(g => !g.Passed && !g.Skipped).Select(g => g.Gate).ToList();
+            var errMsg  = $"Gates fallaron: {string.Join(", ", failed)}";
+
+            run.Status     = "failed";
+            run.FinishedAt = DateTime.UtcNow;
+            run.Logs       = gateLogs.Length > 5000 ? gateLogs[..5000] : gateLogs;
+            run.Errors     = errMsg;
+
+            product.DeployStatus = "failed";
+            product.IsProcessing = false;
+            product.DeployLogs   = gateLogs.Length > 3000 ? gateLogs[..3000] : gateLogs;
+            product.UpdatedAt    = DateTime.UtcNow;
+
+            AddActivity(db, productId, ActivityType.DeployFailed, "Deploy fallido — gates no pasaron",
+                errMsg.Length > 150 ? errMsg[..150] : errMsg);
+
+            var failMsg = await db.ChatMessages
+                .Where(m => m.ProductId == productId && m.Role == MessageRole.Runtime)
+                .OrderByDescending(m => m.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+
+            var gateFailContent = ContentGenerator.GenerateDeployFailed(errMsg);
+            if (failMsg is not null) failMsg.Content = gateFailContent;
+            else AddRuntimeMessage(db, productId, gateFailContent);
+
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+
+        AddActivity(db, productId, ActivityType.DeployBuildPassed, "Pre-deploy gates pasaron",
+            $"{gates.Count(g => g.Passed)} gates OK · iniciando deploy a proveedor");
+
+        product.DeployStatus = "deploying";
+        product.UpdatedAt    = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        // ── Execute deploy ────────────────────────────────────────────────────
+        var (success, deployUrl, deployLogs) = await deployEngine.ExecuteDeployAsync(product, ct);
+
+        var combinedLogs = gateLogs + "\n\n--- DEPLOY ---\n" + deployLogs;
+        run.Logs       = combinedLogs.Length > 5000 ? combinedLogs[..5000] : combinedLogs;
+        run.FinishedAt = DateTime.UtcNow;
+
+        product.DeployLogs   = deployLogs.Length > 3000 ? deployLogs[..3000] : deployLogs;
+        product.IsProcessing = false;
+        product.UpdatedAt    = DateTime.UtcNow;
+
+        var lastMsg = await db.ChatMessages
+            .Where(m => m.ProductId == productId && m.Role == MessageRole.Runtime)
+            .OrderByDescending(m => m.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (success)
+        {
+            run.Status    = "passed";
+            run.DeployUrl = deployUrl;
+
+            product.DeployStatus           = "deployed";
+            product.DeployUrl              = deployUrl;
+            product.DeployedAt             = DateTime.UtcNow;
+            product.LastSuccessfulDeployAt = DateTime.UtcNow;
+            product.DeployCommitHash       = commitHash;
+            product.DeployBranch           = branch;
+
+            AddActivity(db, productId, ActivityType.DeploySucceeded, "Deploy exitoso",
+                deployUrl ?? "URL no disponible");
+
+            var successContent = ContentGenerator.GenerateDeploySuccess(deployUrl);
+            if (lastMsg is not null) lastMsg.Content = successContent;
+            else AddRuntimeMessage(db, productId, successContent);
+        }
+        else
+        {
+            run.Status = "failed";
+            run.Errors = deployLogs.Length > 2000 ? deployLogs[..2000] : deployLogs;
+
+            product.DeployStatus = "failed";
+
+            var reason = deployLogs.Length > 200 ? deployLogs[..200] + "…" : deployLogs;
+            AddActivity(db, productId, ActivityType.DeployFailed, "Deploy fallido",
+                reason.Length > 150 ? reason[..150] : reason);
+
+            var failedContent = ContentGenerator.GenerateDeployFailed(reason);
+            if (lastMsg is not null) lastMsg.Content = failedContent;
+            else AddRuntimeMessage(db, productId, failedContent);
+        }
+
+        await db.SaveChangesAsync(ct);
+        await bus.PingAsync(productId);
+
+        logger.LogInformation(
+            "DeployRun {RunId}: {Status} | url={Url} | gates={GateCount}",
+            run.Id, run.Status, run.DeployUrl, gates.Count);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1005,25 +1189,72 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
 
     private static string ExtractFeatureName(string content)
     {
-        var lower = content.ToLowerInvariant().Trim();
-        string[] prefixes =
+        var s = content.ToLowerInvariant().Trim();
+
+        // Step 1: strip leading verb + article combos (longest first to avoid partial matches)
+        string[] verbPrefixes =
         [
-            "quiero que agregues ", "quiero que agreguemos ", "por favor agrega ",
-            "por favor agregá ", "necesito que agregues ", "necesito un ", "necesito una ",
+            "quiero que agregues ", "quiero que agreguemos ", "necesito que agregues ",
+            "por favor agrega ", "por favor agregá ",
             "agregá un ", "agregá una ", "agregá el ", "agregá la ",
             "agrega un ", "agrega una ", "agrega el ", "agrega la ",
-            "agregar un ", "agregar una ",
-            "agregá ", "agrega ", "agregar ", "quiero ", "añadí ", "añade ",
-            "necesito ", "implementá ", "implementa ",
+            "agregar un ", "agregar una ", "agregar el ", "agregar la ",
+            "quiero un ", "quiero una ", "quiero el ", "quiero la ",
+            "necesito un ", "necesito una ", "necesito el ", "necesito la ",
+            "agregá ", "agrega ", "agregar ", "añadí ", "añade ", "añadir ",
+            "quiero ", "necesito ", "implementá ", "implementa ", "implementar ",
         ];
-        foreach (var prefix in prefixes)
-            if (lower.StartsWith(prefix)) { lower = lower[prefix.Length..]; break; }
+        foreach (var p in verbPrefixes)
+            if (s.StartsWith(p)) { s = s[p.Length..]; break; }
 
-        // Remove trailing punctuation
-        lower = lower.TrimEnd('.', '!', '?', ',', ';');
+        // Step 2: strip trailing context noise (loop to handle chained suffixes)
+        string[] tails =
+        [
+            " al sistema", " a la aplicación", " a la app", " al proyecto",
+            " para el sistema", " para la app", " en el sistema", " en la app",
+            " que sea robusto", " que sea completo", " completo", " funcional",
+            " por favor", " gracias",
+        ];
+        bool stripped;
+        do
+        {
+            stripped = false;
+            foreach (var t in tails)
+            {
+                if (s.EndsWith(t)) { s = s[..^t.Length]; stripped = true; break; }
+            }
+        } while (stripped);
 
-        // Title-case each word
-        return string.Join(" ", lower.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        // Step 3: strip leading administrative / management nouns
+        // Normalize both sides so accented and unaccented inputs both match
+        static string Norm(string t) => t
+            .Replace("á","a").Replace("é","e").Replace("í","i").Replace("ó","o").Replace("ú","u")
+            .Replace("ñ","n").Replace("ü","u");
+
+        var sNorm = Norm(s);
+        string[] adminPrefixes =
+        [
+            "gestion de ", "modulo de ", "manejo de ", "control de ",
+            "administracion de ", "registro de ", "sistema de ",
+            "panel de ", "seccion de ", "area de ", "apartado de ",
+            "controlar ", "manejar ", "administrar ", "gestionar ", "registrar ",
+        ];
+        foreach (var a in adminPrefixes)
+            if (sNorm.StartsWith(a)) { s = s[a.Length..]; break; }
+
+        s = s.TrimEnd('.', '!', '?', ',', ';').Trim();
+
+        // Step 4: if still 4+ words, extract the first meaningful noun (≥4 chars, non-stopword)
+        var words = s.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length >= 4)
+        {
+            string[] stopwords = ["para", "con", "del", "los", "las", "sus", "que", "por", "una", "los"];
+            var core = words.FirstOrDefault(w => w.Length >= 4 && !stopwords.Contains(w)) ?? words[0];
+            s = core;
+        }
+
+        // Step 5: title-case
+        return string.Join(" ", s.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Select(w => w.Length > 0 ? char.ToUpperInvariant(w[0]) + w[1..] : w));
     }
 
@@ -1052,11 +1283,13 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
 
     private static string ToDeltaRoute(string featureName)
     {
+        // featureName is already clean (e.g. "Proveedores", "Facturación")
+        // Normalize accents then take first meaningful word
         var lower = featureName.ToLowerInvariant()
-            .Replace("gestión de ", "").Replace("gestión ", "")
-            .Replace("módulo de ", "").Replace("módulo ", "");
+            .Replace("á", "a").Replace("é", "e").Replace("í", "i").Replace("ó", "o").Replace("ú", "u")
+            .Replace("ñ", "n").Replace("ü", "u");
         var first = lower.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault(w => w.Length >= 3) ?? "module";
+            .FirstOrDefault(w => w.Length >= 3) ?? lower;
         return System.Text.RegularExpressions.Regex.Replace(first, @"[^a-z0-9-]", "");
     }
 

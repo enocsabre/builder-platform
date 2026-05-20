@@ -1,11 +1,14 @@
 "use client";
 
 import { ScaffoldEntry, ScaffoldStatus } from "@/lib/types";
+import { FolderCode, Loader2 } from "lucide-react";
 
 interface ScaffoldTreeProps {
   entries: ScaffoldEntry[];
   scaffoldStatus: ScaffoldStatus;
   projectPath: string | null;
+  onOpenVSCode?:  () => void;
+  vsCodeLoading?: boolean;
 }
 
 const LANG_COLOR: Record<string, string> = {
@@ -119,7 +122,7 @@ function TreeNodeRow({ node, depth }: { node: TreeNode; depth: number }) {
   );
 }
 
-export default function ScaffoldTree({ entries, scaffoldStatus, projectPath }: ScaffoldTreeProps) {
+export default function ScaffoldTree({ entries, scaffoldStatus, projectPath, onOpenVSCode, vsCodeLoading }: ScaffoldTreeProps) {
   if (scaffoldStatus === "none") {
     return (
       <div style={{ padding: "32px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>
@@ -169,9 +172,36 @@ export default function ScaffoldTree({ entries, scaffoldStatus, projectPath }: S
           <strong style={{ color: "var(--foreground)" }}>{langs.length}</strong> lenguajes
         </span>
         {projectPath && (
-          <span style={{ marginLeft: "auto", fontFamily: "monospace", fontSize: "11px" }}>
+          <span style={{ marginLeft: "auto", fontFamily: "monospace", fontSize: "11px", color: "var(--muted)" }}>
             {projectPath}
           </span>
+        )}
+        {onOpenVSCode && (
+          <button
+            onClick={onOpenVSCode}
+            disabled={vsCodeLoading}
+            title="Abrir proyecto en VS Code"
+            style={{
+              display:      "flex",
+              alignItems:   "center",
+              gap:          "5px",
+              padding:      "4px 10px",
+              borderRadius: "6px",
+              border:       "1px solid var(--border)",
+              background:   "var(--surface)",
+              color:        vsCodeLoading ? "var(--muted)" : "var(--foreground)",
+              fontSize:     "11px",
+              fontWeight:   "600",
+              cursor:       vsCodeLoading ? "not-allowed" : "pointer",
+              marginLeft:   projectPath ? "8px" : "auto",
+            }}
+          >
+            {vsCodeLoading
+              ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
+              : <FolderCode size={11} />
+            }
+            {vsCodeLoading ? "Abriendo…" : "Abrir en VS Code"}
+          </button>
         )}
       </div>
 

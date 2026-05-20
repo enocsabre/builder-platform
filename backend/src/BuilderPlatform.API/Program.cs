@@ -14,6 +14,8 @@ builder.Services.AddSingleton<RuntimePatchEngine>();
 builder.Services.AddSingleton<PreviewRunner>();
 builder.Services.AddSingleton<RuntimeValidationEngine>();
 builder.Services.AddSingleton<AutofixEngine>();
+builder.Services.AddSingleton<DeployEngine>();
+builder.Services.AddSingleton<RuntimeEventBus>();
 
 // RuntimeOrchestrator registered as singleton so controller can inject it,
 // then also registered as the hosted service so the framework starts/stops it.

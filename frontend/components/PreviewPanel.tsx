@@ -1,13 +1,16 @@
 "use client";
 
 import { ProductDetail, PreviewStatus } from "@/lib/types";
-import { ExternalLink, Play, Square, AlertCircle, Loader2, CheckCircle2 } from "lucide-react";
+import { ExternalLink, Play, Square, AlertCircle, Loader2, CheckCircle2, FolderCode } from "lucide-react";
 
 interface PreviewPanelProps {
   product: ProductDetail;
   onStartPreview:  () => void;
   onStopPreview:   () => void;
   isActioning:     boolean;
+  onOpenVSCode?:   () => void;
+  vsCodeLoading?:  boolean;
+  vsCodeError?:    string | null;
 }
 
 const STATUS_CONFIG: Record<PreviewStatus, {
@@ -22,7 +25,7 @@ const STATUS_CONFIG: Record<PreviewStatus, {
   error:    { label: "Error",      color: "var(--status-danger-text)", bg: "var(--status-danger-bg)", icon: <AlertCircle  size={12} /> },
 };
 
-export default function PreviewPanel({ product, onStartPreview, onStopPreview, isActioning }: PreviewPanelProps) {
+export default function PreviewPanel({ product, onStartPreview, onStopPreview, isActioning, onOpenVSCode, vsCodeLoading, vsCodeError }: PreviewPanelProps) {
   const status = (product.previewStatus ?? "stopped") as PreviewStatus;
   const cfg    = STATUS_CONFIG[status] ?? STATUS_CONFIG.stopped;
   const canStart  = status === "stopped" || status === "error";
@@ -138,6 +141,30 @@ export default function PreviewPanel({ product, onStartPreview, onStopPreview, i
               Abrir SaaS
             </a>
           )}
+
+          {scaffoldReady && onOpenVSCode && (
+            <button
+              onClick={onOpenVSCode}
+              disabled={vsCodeLoading}
+              title={product.projectPath ?? ""}
+              style={{
+                display:      "flex",
+                alignItems:   "center",
+                gap:          "6px",
+                padding:      "6px 14px",
+                borderRadius: "8px",
+                border:       "1px solid var(--border)",
+                background:   vsCodeLoading ? "var(--surface-elevated)" : "var(--surface)",
+                color:        vsCodeLoading ? "var(--muted)" : "var(--foreground)",
+                fontSize:     "12px",
+                fontWeight:   "600",
+                cursor:       vsCodeLoading ? "not-allowed" : "pointer",
+              }}
+            >
+              {vsCodeLoading ? <Loader2 size={12} className="animate-spin" /> : <FolderCode size={12} />}
+              {vsCodeLoading ? "Abriendo…" : "VS Code"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -211,6 +238,26 @@ export default function PreviewPanel({ product, onStartPreview, onStopPreview, i
             >
               {product.previewError}
             </pre>
+          </div>
+        )}
+
+        {/* VS Code error */}
+        {vsCodeError && (
+          <div
+            style={{
+              padding:      "12px 14px",
+              background:   "var(--status-warn-bg)",
+              border:       "1px solid rgba(251,191,36,0.2)",
+              borderRadius: "8px",
+              marginBottom: "12px",
+            }}
+          >
+            <p style={{ fontSize: "11px", fontWeight: "600", color: "var(--status-warn-text)", marginBottom: "4px" }}>
+              VS Code no disponible
+            </p>
+            <p style={{ fontSize: "11px", color: "var(--status-warn-text)", lineHeight: "1.6" }}>
+              {vsCodeError}
+            </p>
           </div>
         )}
 

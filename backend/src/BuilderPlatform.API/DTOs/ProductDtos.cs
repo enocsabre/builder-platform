@@ -19,7 +19,10 @@ public record ProductSummaryDto(
     string    ScaffoldStatus,
     string    RuntimeHealth,
     DateTime  CreatedAt,
-    DateTime  UpdatedAt
+    DateTime  UpdatedAt,
+    string    DeployStatus,
+    string?   DeployUrl,
+    DateTime? DeployedAt
 );
 
 public record ProductDetailDto(
@@ -48,7 +51,13 @@ public record ProductDetailDto(
     IEnumerable<ScaffoldChangeDto>  ScaffoldChanges,
     IEnumerable<ProductModuleDto>   Modules,
     IEnumerable<FileRevisionDto>    FileRevisions,
-    IEnumerable<ValidationRunSummaryDto> ValidationRuns
+    IEnumerable<ValidationRunSummaryDto> ValidationRuns,
+    string                          DeployStatus,
+    string?                         DeployUrl,
+    DateTime?                       DeployedAt,
+    string?                         DeployCommitHash,
+    string?                         DeployBranch,
+    IEnumerable<DeployRunSummaryDto> DeployRuns
 );
 
 public record ScaffoldEntryDto(
@@ -164,6 +173,29 @@ public record ValidationRunDetailDto(
     int                         GatesPassed,
     int                         GatesFailed,
     IEnumerable<GateResultDto>  GateResults
+);
+
+public record DeployRunSummaryDto(
+    Guid      Id,
+    string    Status,
+    DateTime  StartedAt,
+    DateTime? FinishedAt,
+    string?   DeployUrl,
+    string?   CommitHash,
+    string?   Branch
+);
+
+public record DeployRunDetailDto(
+    Guid                       Id,
+    string                     Status,
+    DateTime                   StartedAt,
+    DateTime?                  FinishedAt,
+    string?                    Logs,
+    string?                    Errors,
+    string?                    DeployUrl,
+    string?                    CommitHash,
+    string?                    Branch,
+    IEnumerable<GateResultDto> GateResults
 );
 
 public record SendMessageRequest(string Content);

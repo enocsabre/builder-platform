@@ -7,5 +7,9 @@
   },
   "Scaffold": {
     "OutputPath": "/absolute/path/to/builder-platform/generated"
+  },
+  "Deploy": {
+    "Provider": "vercel",
+    "VercelToken": "your-vercel-token-here"
   }
 }

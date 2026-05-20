@@ -29,6 +29,17 @@ public class Product
     public ICollection<ProductModule>  Modules          { get; set; } = [];
     public ICollection<FileRevision>   FileRevisions    { get; set; } = [];
     public ICollection<ValidationRun>  ValidationRuns   { get; set; } = [];
+
+    // ── Deploy ────────────────────────────────────────────────────────────────
+    public string    DeployStatus            { get; set; } = "not_deployed";
+    public DateTime? DeployedAt              { get; set; }
+    public string?   DeployUrl               { get; set; }
+    public string?   DeployLogs              { get; set; }
+    public DateTime? LastSuccessfulDeployAt  { get; set; }
+    public string?   DeployCommitHash        { get; set; }
+    public string?   DeployBranch            { get; set; }
+
+    public ICollection<DeployRun> DeployRuns { get; set; } = [];
 }
 
 public enum ProductStatus

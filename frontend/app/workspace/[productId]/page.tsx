@@ -1,10 +1,11 @@
 "use client";
 import { useState, useEffect, useRef, use, useCallback } from "react";
+import { useProductStream } from "@/lib/stream";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, ExternalLink, Send, Check, X,
   Clock, Activity, CheckSquare, MessageSquare, Database,
-  FileText, ExternalLink as ArtifactLink, FolderOpen, Zap, Map, Monitor, HardDrive, Shield,
+  FileText, ExternalLink as ArtifactLink, FolderOpen, Zap, Map, Monitor, HardDrive, Shield, Rocket,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -16,6 +17,7 @@ import StructurePanel from "@/components/StructurePanel";
 import PreviewPanel from "@/components/PreviewPanel";
 import FilesPanel from "@/components/FilesPanel";
 import QualityPanel from "@/components/QualityPanel";
+import DeployPanel from "@/components/DeployPanel";
 import { api } from "@/lib/api";
 import type {
   ProductDetail, Message, Activity as ActivityEvent,
@@ -72,9 +74,18 @@ const activityIcon: Record<string, string> = {
   PreviewRestarted:        "🔄",
   RuntimePatchSkipped:     "⏭",
   RuntimePatchFailed:      "⚠️",
+  DeployStarted:           "🚀",
+  DeployBuildStarted:      "🔨",
+  DeployBuildPassed:       "✅",
+  DeployFailed:            "❌",
+  DeploySucceeded:         "🟢",
+  DeployRecoveryStarted:   "🔄",
   ErrorOccurred:           "❌",
-  StatusChanged:         "🔄",
-  MessageSent:           "💬",
+  StatusChanged:           "🔄",
+  MessageSent:             "💬",
+  VSCodeOpenRequested:     "📂",
+  VSCodeOpenSucceeded:     "🖥️",
+  VSCodeOpenFailed:        "⚠️",
 };
 
 const artifactTypeLabel: Record<string, string> = {
@@ -108,11 +119,14 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
   const [loading, setLoading]     = useState(true);
   const [input, setInput]         = useState("");
   const [sending, setSending]     = useState(false);
-  const [activeTab, setActiveTab] = useState<"artifacts" | "activity" | "approvals" | "memory" | "scaffold" | "changes" | "structure" | "preview" | "archivos" | "calidad">("artifacts");
+  const [activeTab, setActiveTab] = useState<"artifacts" | "activity" | "approvals" | "memory" | "scaffold" | "changes" | "structure" | "preview" | "archivos" | "calidad" | "deploy">("artifacts");
   const [resolvingId, setResolvingId]     = useState<string | null>(null);
   const [previewActioning, setPreviewActioning] = useState(false);
   const [prevActivityCount, setPrevActivityCount] = useState(0);
   const [viewingArtifact, setViewingArtifact] = useState<string | null>(null);
+  const [currentStep, setCurrentStep]     = useState<string | null>(null);
+  const [vsCodeLoading, setVsCodeLoading] = useState(false);
+  const [vsCodeError, setVsCodeError]     = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -126,18 +140,31 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
     setLoading(false);
   }, [productId]);
 
-  // Auto-poll when product is processing
+  // SSE real-time stream — immediate ping on any backend state change
+  useProductStream(productId, {
+    onPing: () => load(),
+    onStep: (title) => setCurrentStep(title),
+  });
+
+  // Clear step indicator when runtime goes idle
+  useEffect(() => {
+    if (!product?.isProcessing) setCurrentStep(null);
+  }, [product?.isProcessing]);
+
+  // Safety poll — SSE handles real-time; this catches any missed events
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     async function tick() {
       await load();
       setProduct(current => {
         if (!current) return current;
-        const isLive        = current.isProcessing || PROCESSING_STATUSES.includes(current.status) || current.scaffoldStatus === "generating" || current.runtimePhase === "executing";
-        const isActive      = ACTIVE_STATUSES.includes(current.status);
         const previewLoading = current.previewStatus === "starting";
-        if (isLive || previewLoading) timer = setTimeout(tick, 2000);
-        else if (isActive)            timer = setTimeout(tick, 5000);
+        const isDeploying    = ["preparing", "building", "deploying"].includes(current.deployStatus);
+        // Fast poll only for preview starting (TCP probe) and active deploy
+        if (previewLoading || isDeploying) timer = setTimeout(tick, 3000);
+        // Safety net for all other active states — SSE handles the real-time part
+        else if (current.isProcessing || PROCESSING_STATUSES.includes(current.status) || ACTIVE_STATUSES.includes(current.status))
+          timer = setTimeout(tick, 15000);
         return current;
       });
     }
@@ -219,6 +246,28 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
     }
   }
 
+  async function openVSCode() {
+    if (vsCodeLoading) return;
+    setVsCodeLoading(true);
+    setVsCodeError(null);
+    try {
+      await api.products.openVSCode(productId);
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const colonIdx = raw.indexOf(": ");
+      if (colonIdx !== -1) {
+        try {
+          const body = JSON.parse(raw.slice(colonIdx + 2)) as { error?: string; details?: string };
+          setVsCodeError(body.details ?? body.error ?? raw);
+        } catch { setVsCodeError(raw); }
+      } else {
+        setVsCodeError(raw);
+      }
+    } finally {
+      setVsCodeLoading(false);
+    }
+  }
+
   if (loading) return (
     <AppShell>
       <div className="flex items-center justify-center h-full py-32">
@@ -269,6 +318,18 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
               <ExternalLink size={13} />Abrir preview
             </a>
           )}
+
+          {product.scaffoldStatus === "complete" && product.projectPath && (
+            <button
+              onClick={openVSCode}
+              disabled={vsCodeLoading}
+              className="btn-ghost flex items-center gap-1.5 text-[12px] px-3 py-1.5"
+              title={product.projectPath}
+            >
+              <FolderOpen size={13} />
+              {vsCodeLoading ? "Abriendo…" : "VS Code"}
+            </button>
+          )}
         </div>
 
         {/* runtime status bar */}
@@ -298,12 +359,23 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
                     style={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", color: "var(--status-indigo-text)" }}>
                     AI
                   </div>
-                  <div className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl" style={{ background: "var(--surface-elevated)", borderRadius: "4px 16px 16px 16px" }}>
-                    {[0, 1, 2].map(i => (
-                      <span key={i} className="w-1.5 h-1.5 rounded-full animate-pulse-dot"
-                        style={{ background: "var(--status-indigo-text)", animationDelay: `${i * 0.2}s` }} />
-                    ))}
-                  </div>
+                  {currentStep ? (
+                    <div
+                      className="flex items-center gap-2 px-4 py-2.5 text-[13px] leading-relaxed animate-slide-in"
+                      style={{ background: "var(--surface-elevated)", borderRadius: "4px 16px 16px 16px", color: "var(--status-indigo-text)" }}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0 animate-pulse-dot"
+                        style={{ background: "var(--status-indigo-text)" }} />
+                      {currentStep}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl" style={{ background: "var(--surface-elevated)", borderRadius: "4px 16px 16px 16px" }}>
+                      {[0, 1, 2].map(i => (
+                        <span key={i} className="w-1.5 h-1.5 rounded-full animate-pulse-dot"
+                          style={{ background: "var(--status-indigo-text)", animationDelay: `${i * 0.2}s` }} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               <div ref={messagesEndRef} />
@@ -377,6 +449,14 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
                   product.runtimeHealth === "degraded"  ? "badge-warn"   :
                   product.runtimeHealth === "broken"    ? "badge-danger"  : "badge-muted"
                 } />
+              <TabBtn active={activeTab === "deploy"} onClick={() => setActiveTab("deploy")}
+                icon={<Rocket size={13} />} label="Deploy"
+                count={product.deployRuns?.length ?? 0}
+                countClass={
+                  product.deployStatus === "deployed"  ? "badge-active"  :
+                  product.deployStatus === "failed"    ? "badge-danger"   :
+                  ["preparing","building","deploying"].includes(product.deployStatus) ? "badge-warn" : "badge-muted"
+                } />
               <TabBtn active={activeTab === "memory"} onClick={() => setActiveTab("memory")}
                 icon={<Database size={13} />} label="Memoria" count={0} />
             </div>
@@ -390,6 +470,8 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
                   entries={product.scaffoldEntries ?? []}
                   scaffoldStatus={product.scaffoldStatus}
                   projectPath={product.projectPath}
+                  onOpenVSCode={product.scaffoldStatus === "complete" && product.projectPath ? openVSCode : undefined}
+                  vsCodeLoading={vsCodeLoading}
                 />
               )}
               {activeTab === "changes"    && (
@@ -404,10 +486,14 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
                   onStartPreview={startPreview}
                   onStopPreview={stopPreview}
                   isActioning={previewActioning}
+                  onOpenVSCode={product.scaffoldStatus === "complete" && product.projectPath ? openVSCode : undefined}
+                  vsCodeLoading={vsCodeLoading}
+                  vsCodeError={vsCodeError}
                 />
               )}
               {activeTab === "archivos"   && <FilesPanel product={product} />}
               {activeTab === "calidad"    && <QualityPanel product={product} />}
+              {activeTab === "deploy"     && <DeployPanel product={product} onRefresh={load} />}
               {activeTab === "memory"     && <MemoryPanel entries={product.memory} />}
             </div>
           </div>

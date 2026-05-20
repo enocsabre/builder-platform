@@ -258,6 +258,21 @@ public class ProjectAwarenessEngine(ILogger<ProjectAwarenessEngine> logger)
 
         var opts = new JsonSerializerOptions { WriteIndented = true };
 
+        // Load human-readable entity labels if written by ScaffoldEngine
+        var entityLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var labelsPath   = Path.Combine(registryDir, "entity-labels.json");
+        if (File.Exists(labelsPath))
+        {
+            try
+            {
+                var raw = await File.ReadAllTextAsync(labelsPath, ct);
+                var loaded = JsonSerializer.Deserialize<Dictionary<string, string>>(raw);
+                if (loaded is not null)
+                    foreach (var kv in loaded) entityLabels[kv.Key] = kv.Value;
+            }
+            catch { /* ignore malformed labels — fall back to entity name */ }
+        }
+
         var modulesPayload = modules.Select(m => new
         {
             name       = m.ModuleName,
@@ -271,7 +286,14 @@ public class ProjectAwarenessEngine(ILogger<ProjectAwarenessEngine> logger)
             Path.Combine(registryDir, "modules.json"),
             JsonSerializer.Serialize(modulesPayload, opts), new System.Text.UTF8Encoding(false), ct);
 
-        var navItems = modules.Select(m => new { label = m.ModuleName, href = m.RoutePath, icon = "Grid" });
+        var navItems = modules.Select(m => new
+        {
+            label = entityLabels.TryGetValue(m.EntityName ?? m.ModuleName, out var humanLabel)
+                        ? humanLabel
+                        : m.ModuleName,
+            href  = m.RoutePath,
+            icon  = "Grid",
+        });
         await File.WriteAllTextAsync(
             Path.Combine(registryDir, "nav-items.json"),
             JsonSerializer.Serialize(navItems, opts), new System.Text.UTF8Encoding(false), ct);
