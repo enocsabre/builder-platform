@@ -98,6 +98,8 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         WriteFile(feRoot, "postcss.config.mjs",   PostcssConfig(),                    "javascript", entries, ref order);
         WriteFile(feRoot, "instrumentation.ts",   InstrumentationHook(),              "typescript", entries, ref order);
         WriteFile(feRoot, "tailwind.config.ts",   TailwindConfig(),                   "typescript", entries, ref order);
+        WriteFile(feRoot, ".gitignore",            FrontendGitIgnore(),                null,         entries, ref order);
+        WriteFile(feRoot, "middleware.ts",         Middleware(),                       "typescript", entries, ref order);
 
         var appRoot = Path.Combine(feRoot, "app");
         WriteFile(appRoot, "globals.css",  GlobalsCss(),                 "css",        entries, ref order);
@@ -107,17 +109,30 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         WriteFile(Path.Combine(appRoot, "dashboard"), "page.tsx",
             DashboardPage(displayName, profile), "typescript", entries, ref order);
 
+        var demoEmail    = $"admin@{ToSlug(displayName)}.com";
+        const string demoPassword = "Demo1234!";
         WriteFile(Path.Combine(appRoot, "login"), "page.tsx",
-            LoginPage(displayName), "typescript", entries, ref order);
+            LoginPage(displayName, demoEmail, demoPassword), "typescript", entries, ref order);
 
         foreach (var feature in profile.CoreFeatures.Take(5))
             WriteFile(Path.Combine(appRoot, ToRoute(feature)), "page.tsx",
                 FeaturePage(feature, ToRoute(feature), profile), "typescript", entries, ref order);
 
+        // Auth API routes
+        WriteFile(Path.Combine(appRoot, "api", "auth", "login"),  "route.ts",
+            ApiAuthLoginRoute(demoEmail, demoPassword), "typescript", entries, ref order);
+        WriteFile(Path.Combine(appRoot, "api", "auth", "logout"), "route.ts",
+            ApiAuthLogoutRoute(), "typescript", entries, ref order);
+
+        // Data persistence API route (dynamic [module] segment)
+        WriteFile(Path.Combine(appRoot, "api", "data", "[module]"), "route.ts",
+            ApiDataRoute(), "typescript", entries, ref order);
+
         var componentsRoot = Path.Combine(feRoot, "components");
-        WriteFile(componentsRoot, "Sidebar.tsx",       SidebarServer(displayName),       "typescript", entries, ref order);
+        WriteFile(componentsRoot, "Sidebar.tsx",       SidebarServer(displayName),          "typescript", entries, ref order);
         WriteFile(componentsRoot, "SidebarClient.tsx", SidebarClientComponent(displayName), "typescript", entries, ref order);
-        WriteFile(componentsRoot, "Header.tsx",        HeaderComponent(),                "typescript", entries, ref order);
+        WriteFile(componentsRoot, "AppShell.tsx",      AppShellComponent(),                 "typescript", entries, ref order);
+        WriteFile(componentsRoot, "Header.tsx",        HeaderComponent(),                   "typescript", entries, ref order);
 
         var libRoot = Path.Combine(feRoot, "lib");
         WriteFile(libRoot, "types.ts",  LibTypes(profile), "typescript", entries, ref order);
@@ -493,6 +508,7 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         import type { Metadata } from "next";
         import "./globals.css";
         import { Sidebar } from "@/components/Sidebar";
+        import { AppShell } from "@/components/AppShell";
 
         export const metadata: Metadata = {
           title: "__DISPLAY_NAME__",
@@ -503,10 +519,9 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
           return (
             <html lang="es">
               <body>
-                <div style={{ display: "flex", height: "100vh", background: "var(--background)" }}>
-                  <Sidebar />
-                  <main style={{ flex: 1, overflow: "auto" }}>{children}</main>
-                </div>
+                <AppShell sidebar={<Sidebar />}>
+                  {children}
+                </AppShell>
               </body>
             </html>
           );
@@ -590,41 +605,73 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                .Replace("__DISPLAY_NAME__", displayName);
     }
 
-    private static string LoginPage(string displayName) =>
+    private static string LoginPage(string displayName, string demoEmail, string demoPassword) =>
         """
         "use client";
         import { useState } from "react";
+        import { useRouter } from "next/navigation";
+
+        const DEMO_EMAIL = "__EMAIL__";
+        const DEMO_PASS  = "__PASSWORD__";
 
         export default function LoginPage() {
-          const [email, setEmail] = useState("");
-          const [password, setPassword] = useState("");
-          const [loading, setLoading] = useState(false);
+          const [email,    setEmail]    = useState(DEMO_EMAIL);
+          const [password, setPassword] = useState(DEMO_PASS);
+          const [error,    setError]    = useState("");
+          const [loading,  setLoading]  = useState(false);
+          const router = useRouter();
 
           const handleLogin = async (e: React.FormEvent) => {
             e.preventDefault();
             setLoading(true);
-            console.log("Login:", { email, password });
-            setLoading(false);
+            setError("");
+            try {
+              const res = await fetch("/api/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password }),
+              });
+              if (!res.ok) {
+                setError("Credenciales incorrectas. Usá las credenciales demo.");
+                return;
+              }
+              router.push("/dashboard");
+              router.refresh();
+            } catch {
+              setError("Error de conexión. Intentá de nuevo.");
+            } finally {
+              setLoading(false);
+            }
           };
 
           return (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
               <div style={{ width: "100%", maxWidth: "400px", padding: "40px", background: "var(--surface)", borderRadius: "16px", border: "1px solid var(--border)" }}>
-                <h1 style={{ fontSize: "20px", fontWeight: "700", marginBottom: "8px", color: "var(--foreground)" }}>__DISPLAY_NAME__</h1>
-                <p style={{ color: "var(--foreground-muted)", fontSize: "13px", marginBottom: "28px" }}>Iniciá sesión para continuar</p>
+                <h1 style={{ fontSize: "22px", fontWeight: "700", marginBottom: "4px", color: "var(--foreground)" }}>__DISPLAY_NAME__</h1>
+                <p style={{ color: "var(--foreground-muted)", fontSize: "13px", marginBottom: "24px" }}>Iniciá sesión para continuar</p>
+
+                <div style={{ padding: "12px 14px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "10px", marginBottom: "24px" }}>
+                  <p style={{ fontSize: "10px", fontWeight: "600", color: "var(--muted)", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Credenciales demo</p>
+                  <p style={{ fontSize: "12px", fontFamily: "monospace", color: "var(--foreground)", marginBottom: "2px" }}>{DEMO_EMAIL}</p>
+                  <p style={{ fontSize: "12px", fontFamily: "monospace", color: "var(--foreground)" }}>{DEMO_PASS}</p>
+                </div>
+
                 <form onSubmit={handleLogin}>
                   <div style={{ marginBottom: "16px" }}>
-                    <label style={{ display: "block", fontSize: "12px", color: "var(--foreground-muted)", marginBottom: "6px" }}>Email</label>
-                    <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required
+                    <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Email</label>
+                    <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus
                       style={{ width: "100%", padding: "10px 14px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "14px", outline: "none" }} />
                   </div>
-                  <div style={{ marginBottom: "24px" }}>
-                    <label style={{ display: "block", fontSize: "12px", color: "var(--foreground-muted)", marginBottom: "6px" }}>Contraseña</label>
-                    <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required
+                  <div style={{ marginBottom: "20px" }}>
+                    <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Contraseña</label>
+                    <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
                       style={{ width: "100%", padding: "10px 14px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "14px", outline: "none" }} />
                   </div>
+                  {error && (
+                    <p style={{ fontSize: "12px", color: "var(--status-danger-text)", background: "var(--status-danger-bg)", padding: "8px 12px", borderRadius: "6px", marginBottom: "16px" }}>{error}</p>
+                  )}
                   <button type="submit" disabled={loading}
-                    style={{ width: "100%", padding: "11px", background: "var(--accent)", color: "#fff", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: loading ? "not-allowed" : "pointer" }}>
+                    style={{ width: "100%", padding: "11px", background: loading ? "var(--surface-elevated)" : "var(--accent)", color: loading ? "var(--muted)" : "#fff", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: loading ? "not-allowed" : "pointer" }}>
                     {loading ? "Entrando..." : "Entrar"}
                   </button>
                 </form>
@@ -632,7 +679,9 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
             </div>
           );
         }
-        """.Replace("__DISPLAY_NAME__", displayName);
+        """.Replace("__DISPLAY_NAME__", displayName)
+           .Replace("__EMAIL__",        demoEmail)
+           .Replace("__PASSWORD__",     demoPassword);
 
     private static string FeaturePage(string feature, string route, ProductProfile profile)
     {
@@ -641,7 +690,7 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
             return GenericFeaturePage(feature, route);
 
         var colsJs = string.Join(", ", template.Columns.Select(c => $"\"{EscapeJs(c)}\""));
-        var rowsJs = string.Join(",\n      ", template.Rows.Select(r =>
+        var rowsJs = string.Join(",\n  ", template.Rows.Select(r =>
         {
             var cells = string.Join(", ", r.Cells.Select(c => $"\"{EscapeJs(c)}\""));
             return $"{{ cells: [{cells}], sc: \"{r.StatusColor}\" }}";
@@ -649,52 +698,122 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
 
         return
             """
+            "use client";
+            import { useState, useEffect, useCallback } from "react";
+
+            const TITLE      = "__TITLE__";
+            const ACTION     = "__ACTION__";
+            const KPI        = "__KPI_BAR__";
+            const STATUS_COL = __STATUS_COL__ as number;
+            const COLS       = [__COLS__];
+            const DEMO_ROWS  = [
+              __ROWS__
+            ] as { cells: string[]; sc: string }[];
+
+            type Row = { cells: string[]; sc: string };
+            const bg  = (c: string): string =>
+              c === "active" ? "var(--status-active-bg)"   :
+              c === "warn"   ? "var(--status-warn-bg)"     :
+              c === "danger" ? "var(--status-danger-bg)"   : "var(--status-info-bg)";
+            const txt = (c: string): string =>
+              c === "active" ? "var(--status-active-text)" :
+              c === "warn"   ? "var(--status-warn-text)"   :
+              c === "danger" ? "var(--status-danger-text)" : "var(--status-info-text)";
+
             export default function __PASCAL__Page() {
-              const config = {
-                title: "__TITLE__",
-                action: "__ACTION__",
-                kpiBar: "__KPI_BAR__",
-                statusCol: __STATUS_COL__ as number,
-                cols: [__COLS__],
-                rows: [
-                  __ROWS__
-                ] as { cells: string[]; sc: string }[],
+              const [savedRows, setSavedRows] = useState<Row[]>([]);
+              const [loadDone,  setLoadDone]  = useState(false);
+              const [showModal, setShowModal] = useState(false);
+              const [form,      setForm]      = useState<Record<string, string>>({});
+              const [saving,    setSaving]    = useState(false);
+
+              const load = useCallback(async () => {
+                try {
+                  const res = await fetch("/api/data/__ROUTE__");
+                  if (res.ok) {
+                    const data = await res.json() as Array<Record<string, string>>;
+                    setSavedRows(data.map(r => ({
+                      cells: COLS.map(c => r[c] || ""),
+                      sc: r["_sc"] || "info",
+                    })));
+                  }
+                } catch {}
+                finally { setLoadDone(true); }
+              }, []);
+
+              useEffect(() => { void load(); }, [load]);
+
+              const save = async () => {
+                setSaving(true);
+                try {
+                  await fetch("/api/data/__ROUTE__", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ...form, _sc: "info" }),
+                  });
+                  setShowModal(false);
+                  setForm({});
+                  await load();
+                } finally { setSaving(false); }
               };
-              const bg   = (c: string): string =>
-                c === "active" ? "var(--status-active-bg)"   :
-                c === "warn"   ? "var(--status-warn-bg)"     :
-                c === "danger" ? "var(--status-danger-bg)"   : "var(--status-info-bg)";
-              const text = (c: string): string =>
-                c === "active" ? "var(--status-active-text)" :
-                c === "warn"   ? "var(--status-warn-text)"   :
-                c === "danger" ? "var(--status-danger-text)" : "var(--status-info-text)";
+
+              const formCols = COLS.filter((_, ci) => ci !== STATUS_COL);
+
               return (
                 <div style={{ padding: "28px" }}>
                   <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
-                      <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>{config.title}</h1>
-                      <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>{config.kpiBar}</p>
+                      <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>{TITLE}</h1>
+                      <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>{KPI}</p>
                     </div>
-                    <button style={{ padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
-                      {config.action}
+                    <button onClick={() => setShowModal(true)}
+                      style={{ padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                      {ACTION}
                     </button>
                   </div>
+
                   <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead>
                         <tr style={{ background: "var(--surface-elevated)", borderBottom: "1px solid var(--border)" }}>
-                          {config.cols.map((col) => (
+                          {COLS.map((col) => (
                             <th key={col} style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{col}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {config.rows.map((row, ri) => (
+                        {!loadDone && (
+                          <tr><td colSpan={COLS.length} style={{ padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>Cargando...</td></tr>
+                        )}
+                        {loadDone && savedRows.length === 0 && DEMO_ROWS.length === 0 && (
+                          <tr><td colSpan={COLS.length} style={{ padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>Sin registros — usá {ACTION} para agregar el primero</td></tr>
+                        )}
+                        {loadDone && savedRows.map((row, ri) => (
                           <tr key={ri} style={{ borderTop: "1px solid var(--border)" }}>
                             {row.cells.map((cell, ci) => (
                               <td key={ci} style={{ padding: "13px 16px" }}>
-                                {config.statusCol >= 0 && ci === config.statusCol ? (
-                                  <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: text(row.sc) }}>{cell}</span>
+                                {STATUS_COL >= 0 && ci === STATUS_COL ? (
+                                  <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: txt(row.sc) }}>{cell}</span>
+                                ) : (
+                                  <span style={{ fontSize: ci === 0 ? "13px" : "12px", fontWeight: ci === 0 ? "500" : "400", color: ci === 0 ? "var(--foreground)" : "var(--foreground-muted)" }}>{cell}</span>
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                        {loadDone && savedRows.length > 0 && DEMO_ROWS.length > 0 && (
+                          <tr>
+                            <td colSpan={COLS.length} style={{ padding: "5px 16px", background: "var(--surface-elevated)", fontSize: "10px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                              Datos demo
+                            </td>
+                          </tr>
+                        )}
+                        {loadDone && DEMO_ROWS.map((row, ri) => (
+                          <tr key={"d" + ri} style={{ borderTop: "1px solid var(--border)", opacity: savedRows.length > 0 ? 0.4 : 1 }}>
+                            {row.cells.map((cell, ci) => (
+                              <td key={ci} style={{ padding: "13px 16px" }}>
+                                {STATUS_COL >= 0 && ci === STATUS_COL ? (
+                                  <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: txt(row.sc) }}>{cell}</span>
                                 ) : (
                                   <span style={{ fontSize: ci === 0 ? "13px" : "12px", fontWeight: ci === 0 ? "500" : "400", color: ci === 0 ? "var(--foreground)" : "var(--foreground-muted)" }}>{cell}</span>
                                 )}
@@ -705,6 +824,37 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                       </tbody>
                     </table>
                   </div>
+
+                  {showModal && (
+                    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+                      onClick={() => setShowModal(false)}>
+                      <div style={{ background: "var(--surface)", borderRadius: "16px", padding: "28px", width: "440px", maxWidth: "90vw", border: "1px solid var(--border)" }}
+                        onClick={e => e.stopPropagation()}>
+                        <h2 style={{ fontSize: "16px", fontWeight: "700", color: "var(--foreground)", marginBottom: "20px" }}>Nuevo registro — {TITLE}</h2>
+                        {formCols.map((col) => (
+                          <div key={col} style={{ marginBottom: "14px" }}>
+                            <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>{col}</label>
+                            <input
+                              value={form[col] ?? ""}
+                              onChange={e => setForm(prev => ({ ...prev, [col]: e.target.value }))}
+                              placeholder={col}
+                              style={{ width: "100%", padding: "9px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }}
+                            />
+                          </div>
+                        ))}
+                        <div style={{ display: "flex", gap: "8px", marginTop: "20px", justifyContent: "flex-end" }}>
+                          <button onClick={() => setShowModal(false)}
+                            style={{ padding: "8px 16px", borderRadius: "8px", background: "var(--surface-elevated)", color: "var(--foreground-muted)", border: "1px solid var(--border)", fontSize: "13px", cursor: "pointer" }}>
+                            Cancelar
+                          </button>
+                          <button onClick={save} disabled={saving}
+                            style={{ padding: "8px 20px", borderRadius: "8px", background: "var(--accent)", color: "#fff", border: "none", fontSize: "13px", fontWeight: "600", cursor: saving ? "not-allowed" : "pointer" }}>
+                            {saving ? "Guardando..." : "Guardar"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -714,27 +864,68 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                .Replace("__KPI_BAR__",    EscapeJs(template.KpiBar))
                .Replace("__STATUS_COL__", template.StatusColumnIndex.ToString())
                .Replace("__COLS__",       colsJs)
-               .Replace("__ROWS__",       rowsJs);
+               .Replace("__ROWS__",       rowsJs)
+               .Replace("__ROUTE__",      route);
     }
 
     private static string GenericFeaturePage(string feature, string route) =>
         ("""
+        "use client";
+        import { useState, useEffect, useCallback } from "react";
+
+        const DEMO_ROWS = [
+          { name: "Demo Item 1", status: "Activo",     date: "2026-05-15", sc: "active" },
+          { name: "Demo Item 2", status: "Pendiente",  date: "2026-05-14", sc: "warn" },
+          { name: "Demo Item 3", status: "Completado", date: "2026-05-13", sc: "info" },
+        ];
+        const bg   = (c: string) => c === "active" ? "var(--status-active-bg)"   : c === "warn" ? "var(--status-warn-bg)"   : "var(--status-info-bg)";
+        const text = (c: string) => c === "active" ? "var(--status-active-text)" : c === "warn" ? "var(--status-warn-text)" : "var(--status-info-text)";
+
+        type GRow = { name: string; status: string; date: string; sc: string };
+
         export default function __PASCAL__Page() {
-          const rows = [
-            { name: "Demo Item 1", status: "Activo",     date: "2026-05-15", sc: "active" },
-            { name: "Demo Item 2", status: "Pendiente",  date: "2026-05-14", sc: "warn" },
-            { name: "Demo Item 3", status: "Completado", date: "2026-05-13", sc: "info" },
-          ];
-          const bg   = (c: string) => c === "active" ? "var(--status-active-bg)"   : c === "warn" ? "var(--status-warn-bg)"   : "var(--status-info-bg)";
-          const text = (c: string) => c === "active" ? "var(--status-active-text)" : c === "warn" ? "var(--status-warn-text)" : "var(--status-info-text)";
+          const [savedRows, setSavedRows] = useState<GRow[]>([]);
+          const [loadDone,  setLoadDone]  = useState(false);
+          const [showModal, setShowModal] = useState(false);
+          const [form,      setForm]      = useState({ name: "", status: "Activo" });
+          const [saving,    setSaving]    = useState(false);
+
+          const load = useCallback(async () => {
+            try {
+              const res = await fetch("/api/data/__ROUTE__");
+              if (res.ok) {
+                const data = await res.json() as GRow[];
+                setSavedRows(data);
+              }
+            } catch {}
+            finally { setLoadDone(true); }
+          }, []);
+
+          useEffect(() => { void load(); }, [load]);
+
+          const save = async () => {
+            setSaving(true);
+            try {
+              await fetch("/api/data/__ROUTE__", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...form, date: new Date().toISOString().slice(0, 10), sc: "active" }),
+              });
+              setShowModal(false);
+              setForm({ name: "", status: "Activo" });
+              await load();
+            } finally { setSaving(false); }
+          };
+
           return (
             <div style={{ padding: "28px" }}>
               <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
                   <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>__FEATURE__</h1>
-                  <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>Módulo generado · conectá con la API para datos reales</p>
+                  <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>Módulo generado · datos persistentes</p>
                 </div>
-                <button style={{ padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                <button onClick={() => setShowModal(true)}
+                  style={{ padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
                   Nuevo
                 </button>
               </div>
@@ -745,25 +936,71 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                       <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Nombre</th>
                       <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estado</th>
                       <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Fecha</th>
-                      <th style={{ padding: "12px 16px", textAlign: "right", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row) => (
-                      <tr key={row.name} style={{ borderTop: "1px solid var(--border)" }}>
+                    {!loadDone && (
+                      <tr><td colSpan={3} style={{ padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>Cargando...</td></tr>
+                    )}
+                    {loadDone && savedRows.map((row, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
                         <td style={{ padding: "14px 16px", fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{row.name}</td>
                         <td style={{ padding: "14px 16px" }}>
                           <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: text(row.sc) }}>{row.status}</span>
                         </td>
                         <td style={{ padding: "14px 16px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.date}</td>
-                        <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                          <button style={{ fontSize: "12px", color: "var(--accent)", background: "none", border: "none", cursor: "pointer" }}>Editar</button>
+                      </tr>
+                    ))}
+                    {loadDone && savedRows.length > 0 && (
+                      <tr><td colSpan={3} style={{ padding: "5px 16px", background: "var(--surface-elevated)", fontSize: "10px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Datos demo</td></tr>
+                    )}
+                    {loadDone && DEMO_ROWS.map((row) => (
+                      <tr key={row.name} style={{ borderTop: "1px solid var(--border)", opacity: savedRows.length > 0 ? 0.4 : 1 }}>
+                        <td style={{ padding: "14px 16px", fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{row.name}</td>
+                        <td style={{ padding: "14px 16px" }}>
+                          <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: text(row.sc) }}>{row.status}</span>
                         </td>
+                        <td style={{ padding: "14px 16px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.date}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+
+              {showModal && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+                  onClick={() => setShowModal(false)}>
+                  <div style={{ background: "var(--surface)", borderRadius: "16px", padding: "28px", width: "400px", maxWidth: "90vw", border: "1px solid var(--border)" }}
+                    onClick={e => e.stopPropagation()}>
+                    <h2 style={{ fontSize: "16px", fontWeight: "700", color: "var(--foreground)", marginBottom: "20px" }}>Nuevo — __FEATURE__</h2>
+                    <div style={{ marginBottom: "14px" }}>
+                      <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Nombre</label>
+                      <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                        placeholder="Nombre del registro"
+                        style={{ width: "100%", padding: "9px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }} />
+                    </div>
+                    <div style={{ marginBottom: "14px" }}>
+                      <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estado</label>
+                      <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))}
+                        style={{ width: "100%", padding: "9px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }}>
+                        <option>Activo</option>
+                        <option>Pendiente</option>
+                        <option>Completado</option>
+                      </select>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", marginTop: "20px", justifyContent: "flex-end" }}>
+                      <button onClick={() => setShowModal(false)}
+                        style={{ padding: "8px 16px", borderRadius: "8px", background: "var(--surface-elevated)", color: "var(--foreground-muted)", border: "1px solid var(--border)", fontSize: "13px", cursor: "pointer" }}>
+                        Cancelar
+                      </button>
+                      <button onClick={save} disabled={saving}
+                        style={{ padding: "8px 20px", borderRadius: "8px", background: "var(--accent)", color: "#fff", border: "none", fontSize: "13px", fontWeight: "600", cursor: saving ? "not-allowed" : "pointer" }}>
+                        {saving ? "Guardando..." : "Guardar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         }
@@ -826,8 +1063,19 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                   );
                 })}
               </nav>
-              <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)", fontSize: "11px", color: "var(--muted)" }}>
-                Built with Builder Platform
+              <div style={{ padding: "8px", borderTop: "1px solid var(--border)" }}>
+                <button
+                  onClick={async () => {
+                    await fetch("/api/auth/logout", { method: "POST" });
+                    window.location.href = "/login";
+                  }}
+                  style={{ width: "100%", padding: "8px 12px", borderRadius: "8px", background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--muted)", textAlign: "left" }}
+                >
+                  Cerrar sesión
+                </button>
+                <p style={{ padding: "4px 12px 8px", fontSize: "10px", color: "var(--muted)", opacity: 0.6 }}>
+                  Built with Builder Platform
+                </p>
               </div>
             </aside>
           );
@@ -845,6 +1093,145 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
             </header>
           );
         }
+        """;
+
+    private static string AppShellComponent() => """
+        "use client";
+        import { usePathname } from "next/navigation";
+
+        export function AppShell({
+          children,
+          sidebar,
+        }: {
+          children: React.ReactNode;
+          sidebar: React.ReactNode;
+        }) {
+          const pathname = usePathname();
+          if (pathname === "/login") {
+            return (
+              <div style={{ background: "var(--background)", minHeight: "100vh", color: "var(--foreground)" }}>
+                {children}
+              </div>
+            );
+          }
+          return (
+            <div style={{ display: "flex", height: "100vh", background: "var(--background)" }}>
+              {sidebar}
+              <main style={{ flex: 1, overflow: "auto" }}>{children}</main>
+            </div>
+          );
+        }
+        """;
+
+    private static string Middleware() => """
+        import { NextResponse } from "next/server";
+        import type { NextRequest } from "next/server";
+
+        export function middleware(request: NextRequest) {
+          const { pathname } = request.nextUrl;
+          const session  = request.cookies.get("bp-session");
+          const isPublic = pathname === "/login" || pathname.startsWith("/api/auth");
+          const isApi    = pathname.startsWith("/api/");
+
+          if (!session && !isPublic) {
+            if (isApi) {
+              return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
+                status: 401,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+            return NextResponse.redirect(new URL("/login", request.url));
+          }
+          if (session && pathname === "/login") {
+            return NextResponse.redirect(new URL("/dashboard", request.url));
+          }
+          return NextResponse.next();
+        }
+
+        export const config = {
+          matcher: ["/((?!_next/static|_next/image|favicon\\.ico).*)"],
+        };
+        """;
+
+    private static string ApiAuthLoginRoute(string demoEmail, string demoPassword) =>
+        """
+        import { NextResponse } from "next/server";
+
+        const DEMO_EMAIL = "__EMAIL__";
+        const DEMO_PASS  = "__PASSWORD__";
+
+        export async function POST(req: Request) {
+          const { email, password } = await req.json() as { email: string; password: string };
+          if (email.toLowerCase().trim() === DEMO_EMAIL && password === DEMO_PASS) {
+            const res = NextResponse.json({ ok: true });
+            res.cookies.set("bp-session", "demo-ok", {
+              httpOnly: true,
+              maxAge: 60 * 60 * 24 * 7,
+              path: "/",
+              sameSite: "lax",
+            });
+            return res;
+          }
+          return NextResponse.json({ error: "Credenciales incorrectas" }, { status: 401 });
+        }
+        """.Replace("__EMAIL__",    demoEmail)
+           .Replace("__PASSWORD__", demoPassword);
+
+    private static string ApiAuthLogoutRoute() => """
+        import { NextResponse } from "next/server";
+
+        export async function POST() {
+          const res = NextResponse.json({ ok: true });
+          res.cookies.set("bp-session", "", { maxAge: 0, path: "/" });
+          return res;
+        }
+        """;
+
+    private static string ApiDataRoute() => """
+        import { NextResponse } from "next/server";
+        import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+        import { join } from "path";
+
+        function dataFile(module: string): string {
+          const safe = module.replace(/[^a-z0-9-]/g, "").slice(0, 50) || "default";
+          const dir  = join(process.cwd(), ".data");
+          if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+          return join(dir, `${safe}.json`);
+        }
+
+        export async function GET(
+          _req: Request,
+          context: { params: Promise<{ module: string }> }
+        ) {
+          const { module } = await context.params;
+          const file = dataFile(module);
+          if (!existsSync(file)) return NextResponse.json([]);
+          return NextResponse.json(JSON.parse(readFileSync(file, "utf-8")) as unknown[]);
+        }
+
+        export async function POST(
+          req: Request,
+          context: { params: Promise<{ module: string }> }
+        ) {
+          const { module } = await context.params;
+          const body   = await req.json() as Record<string, string>;
+          const file   = dataFile(module);
+          const records = existsSync(file)
+            ? JSON.parse(readFileSync(file, "utf-8")) as unknown[]
+            : [];
+          const record = { id: Date.now().toString(), ...body, _createdAt: new Date().toISOString() };
+          records.push(record);
+          writeFileSync(file, JSON.stringify(records, null, 2));
+          return NextResponse.json(record, { status: 201 });
+        }
+        """;
+
+    private static string FrontendGitIgnore() => """
+        .next/
+        node_modules/
+        .data/
+        *.local
+        out/
         """;
 
     private static string LibTypes(ProductProfile profile)

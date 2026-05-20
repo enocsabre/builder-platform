@@ -247,13 +247,19 @@ public static class ContentGenerator
         $"Generando scaffold real de **{name}**.\n\n" +
         $"Voy a crear la estructura base del proyecto: {p.DbEntities.Length} entidades de dominio, " +
         $"controllers para los módulos principales, AppDbContext configurado, y el frontend con Next.js 15 y el Operational Dark design system.\n\n" +
-        $"El proyecto va a ser compilable desde el primer commit. Esto puede tomar unos segundos...";
+        $"El proyecto incluye autenticación básica lista para usar y persistencia local de datos en cada módulo — " +
+        $"podés iniciar sesión, agregar registros reales y recargar la página sin perder nada.\n\n" +
+        $"Esto puede tomar unos segundos...";
 
     public static string GenerateRuntimeChatScaffoldComplete(string name, int fileCount, string projectPath) =>
-        $"✓ Scaffold de **{name}** completado.\n\n" +
-        $"Se generaron **{fileCount} archivos** en `{projectPath}`.\n\n" +
-        $"El proyecto incluye: entidades de dominio con campos reales, controllers base, AppDbContext configurado, frontend Next.js con sidebar y páginas por módulo, y el Operational Dark design system aplicado automáticamente.\n\n" +
-        $"Podés abrir el proyecto en tu editor y empezar a construir sobre esta base.";
+        $"✓ Scaffold de **{name}** completado — **{fileCount} archivos** generados.\n\n" +
+        $"**Lo que incluye este scaffold:**\n" +
+        $"→ Login funcional con credenciales demo (visibles en la pantalla de ingreso)\n" +
+        $"→ Sesión protegida con cookie — el dashboard requiere login\n" +
+        $"→ Cada módulo tiene botón **Nuevo**, modal de formulario y persistencia en `.data/`\n" +
+        $"→ Los datos sobreviven refresh — no es fake data\n" +
+        $"→ Logout en la barra lateral\n\n" +
+        $"Iniciá el preview y probá: entrá con las credenciales demo, agregá registros, recargá la página.";
 
     public static string GenerateFeatureResponse(string feature, ProductProfile p) =>
         $"Módulo detectado: **{feature.Trim()}**.\n\n" +
