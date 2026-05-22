@@ -15,11 +15,19 @@ public class DemoResetEngine
         var dataDir = Path.Combine(projectPath, "frontend", ".data");
         Directory.CreateDirectory(dataDir);
 
+        // Write canonical seed files
         await File.WriteAllTextAsync(Path.Combine(dataDir, "mesas.json"),             MesasJson,      Utf8NoBom, ct);
         await File.WriteAllTextAsync(Path.Combine(dataDir, "pedidos-comandas.json"),   PedidosJson,    Utf8NoBom, ct);
         await File.WriteAllTextAsync(Path.Combine(dataDir, "display.json"),            DisplayJson,    Utf8NoBom, ct);
         await File.WriteAllTextAsync(Path.Combine(dataDir, "inventario-compras.json"), InventarioJson, Utf8NoBom, ct);
         await File.WriteAllTextAsync(Path.Combine(dataDir, "activity.json"),           ActivityJson,   Utf8NoBom, ct);
+
+        // Delete legacy files from old simulation runs that no page reads
+        foreach (var legacy in new[] { "orders.json", "kitchen.json", "tables.json" })
+        {
+            var path = Path.Combine(dataDir, legacy);
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
 
     // ── Canonical seed data — 14:40 lunch service ─────────────────────────────

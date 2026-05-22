@@ -431,8 +431,9 @@ public class SimulationEngine(ILogger<SimulationEngine> logger, RuntimeEventBus 
         };
         arr.Insert(0, entry);
 
-        // Keep last 20 activity entries
-        while (arr.Count > 20 && arr[^1]?["_simulated"]?.GetValue<bool>() == true)
+        // Keep newest 20 entries — trim oldest unconditionally (seed entries have no _simulated flag
+        // and would block a conditional trim, causing unbounded growth)
+        while (arr.Count > 20)
             arr.RemoveAt(arr.Count - 1);
 
         await WriteArrayAsync(Path.Combine(dataDir, file), arr);
