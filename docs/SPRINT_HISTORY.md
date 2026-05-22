@@ -417,21 +417,158 @@ Sidebar incluye botón "Cerrar sesión" (bottom): `POST /api/auth/logout` → `w
 
 ---
 
+## Sprint 28 — Product Simulation & Scenario Testing MVP
+
+**Objetivo**: El producto generado se siente operacionalmente vivo durante demos, sin que el usuario ingrese datos manualmente.
+
+### SimulationRun entity
+Nueva entidad: `Id`, `ProductId`, `Status` ("running"|"stopped"|"completed"), `Scenario`, `OpsGenerated`, `StartedAt`, `StoppedAt`. FK cascade delete + index on ProductId.
+
+**Migración**: `Sprint28_SimulationRuns`
+
+### 4 ActivityTypes nuevos
+`SimulationStarted`, `SimulationOperationGenerated`, `SimulationStopped`, `SimulationCompleted`
+
+### SimulationEngine — singleton
+`ConcurrentDictionary<Guid, SimState>` + background `Task` por producto. El loop NUNCA toca `AppDbContext` — solo file I/O + `bus.PingAsync()`.
+
+**4 escenarios**:
+| Escenario | Intervalo | Comportamiento |
+|-----------|-----------|----------------|
+| `hora_pico` | 2.5s | Alta carga, cambios de estado rápidos, 15% prob. UpdateInventory |
+| `cocina_congestionada` | 3s | Tickets de cocina acumulados, KDS saturado |
+| `bajo_inventario` | 3.5s | Alertas de stock, movimientos de inventario frecuentes |
+| `operacion_normal` | 4s | Flujo estándar, estados nominales |
+
+**Archivos generados** (nombres exactos que espera Next.js):
+- `pedidos-comandas.json`: `Orden, Mesa, Ítems, Total, Hora, Estado, _sc`
+- `mesas.json`: `Mesa, Capacidad, Estado, Ocupada desde, Mesero, _sc`
+- `display.json` (KDS): `Orden, Mesa, Ítems, Espera, Prioridad, Estado, _sc`
+- `inventario-compras.json`: `Producto, Unidad, Stock, Mínimo, Último movimiento, Estado, _sc`
+- `activity.json`: `desc, when, status, statusColor`
+
+**Reglas críticas**:
+- `TrimSimulated(pedidos, 100)` — 100 registros para que ventas acumuladas no bajen al limpiar
+- `TrimSimulated(display, 50)` — 50 tickets de cocina es suficiente
+- Nombres de archivo DEBEN coincidir exactamente con los nombres de ruta Next.js (bug corregido: antes escribía `orders.json`, `tables.json`)
+- Colores de actividad por contenido: cocina → warn, solicita cuenta → danger, entregado → active
+
+### Endpoints
+- `POST /api/products/{id}/simulate/start` — `{scenario}` — guards: double-start → 422, escenario inválido → 422, projectPath null → 422
+- `POST /api/products/{id}/simulate/stop` — detiene loop, actualiza OpsGenerated en DB
+- `GET /api/products/{id}/simulate/status` — live in-memory si activo, último DB run si no
+
+### SimulationPanel.tsx
+4 scenario cards con descripción, status banner con ops counter, Start/Stop/Refresh buttons, polling 3s mientras activa, última corrida info.
+
+### Workspace — tab Simulación
+Nuevo tab "Simulación" con ícono `Cpu` en el workspace. Activity icons para 4 tipos de simulación + refactor types.
+
+**E2E validado** (2026-05-22):
+- START hora_pico → isRunning, ops creciendo ✓
+- Data files generados con nombres y columnas correctas ✓
+- Ventas acumuladas crecen (no decrementan) ✓
+- DOUBLE START → 422 ✓ · INVALID SCENARIO → 422 ✓
+- STOP → runId persistido, OpsGenerated guardado ✓
+- `dotnet build` 0 errores ✓ · `tsc --noEmit` 0 errores ✓
+
+---
+
+## STAB-28B — Route Fix & Live Refresh Polish
+
+**Objetivo**: Las rutas del producto generado dan 404 al navegar desde el sidebar. Fix sistemático + auto-refresh en páginas de módulos.
+
+### Root cause del 404
+
+**Diagrama del bug**:
+```
+ScaffoldEngine          → genera app/pedidos-comandas/page.tsx  (ruta real)
+ProjectAwarenessEngine  → escanea entidades C# (Order, Table...)
+                        → ResolveRoute("Order", frontendRoutes) → no match → fallback "/orders"
+                        → escribe nav-items.json: [{href: "/orders"}, {href: "/tables"}, ...]
+Sidebar.tsx             → lee nav-items.json → links a /orders, /tables
+Usuario click           → 404 (no existe app/orders/)
+```
+
+**Causa raíz**: `ProjectAwarenessEngine.ResolveRoute` busca coincidencia directa entre nombre de entidad (`"Order"` → `/orders`) y rutas físicas. Como las rutas son en español (`/pedidos-comandas`), no hay match → usa fallback de pluralización de entidad.
+
+**Bug secundario en `ToRoute`**: `NormalizeForPath` no se aplicaba antes del regex `[^a-z0-9-]` → "Menú" → "men" en lugar de "menu".
+
+### Fix 1 — `ScaffoldEngine.ToRoute`
+
+```csharp
+// Antes:
+feature.ToLowerInvariant()
+       .Replace("gestión de ", "").Replace("gestión ", "")
+// Después:
+NormalizeForPath(feature.ToLowerInvariant())
+       .Replace("gestion de ", "").Replace("gestion ", "")
+```
+
+"Menú" → NormalizeForPath → "menu" → ruta `/menu` ✓ (antes generaba `/men`)
+
+### Fix 2 — `ScaffoldEngine.GenerateFrontend` escribe nav-items.json
+
+Al scaffold time, ScaffoldEngine ahora escribe `registry/nav-items.json` con hrefs correctos (usando `ToRoute(feature)` por cada `CoreFeature`). Este archivo es la fuente de verdad.
+
+### Fix 3 — `ProjectAwarenessEngine.WriteRegistryFilesAsync`
+
+En lugar de usar `m.RoutePath` (entity fallback), ahora:
+1. Llama `ScanFrontendRoutes(appDir)` para obtener rutas físicas reales
+2. Excluye `/dashboard` y `/login` (la sidebar los maneja implícitamente)
+3. Label = entity label si hay coincidencia, sino `PrettifyRoute(r)` (e.g. `/pedidos-comandas` → "Pedidos Comandas")
+
+Nuevo helper: `PrettifyRoute(string route)` — capitaliza palabras separadas por `-`.
+
+### Fix 4 — Dashboard refresh 30s → 5s
+
+`DashboardRefresher intervalMs` cambiado de 30000 a 5000 en el template de `ScaffoldEngine.DashboardPage`. Con simulación activa, el dashboard refleja cambios en ≤5s.
+
+### Fix 5 — Auto-refresh en páginas de módulos
+
+Los 3 templates de feature pages (FeaturePage restaurant, GenericFeaturePage, DeltaFeaturePage) y las 4 páginas existentes del Sprint21Restaurant ahora incluyen:
+```typescript
+useEffect(() => {
+  const id = setInterval(() => { void load(); }, 5000);
+  return () => clearInterval(id);
+}, [load]);
+```
+
+Productos futuros: auto-refresh incluido automáticamente en el template generado.
+
+### Validación E2E STAB-28B (2026-05-22)
+```
+/login              → 200 ✓
+/dashboard          → 307 (protected) ✓ — antes: OK
+/pedidos-comandas   → 307 (protected) ✓ — antes: 404
+/mesas              → 307 (protected) ✓ — antes: 404
+/inventario-compras → 307 (protected) ✓ — antes: 404
+/display            → 307 (protected) ✓ — antes: 404
+```
+
+`dotnet build` 0 errores ✓ · `tsc --noEmit` 0 errores ✓
+
+---
+
 ## Deuda técnica activa
 
 | Item | Prioridad | Descripción |
 |------|-----------|-------------|
-| Fresh product E2E entity-labels | Baja | Fix Sprint 12 pendiente confirmar en producto nuevo completamente fresh |
 | Templates más ricos por industria | Media | Gaming, Healthcare, Logistics tienen templates básicos vs Restaurant |
 | Reservaciones en Restaurant | Baja | No aparece en CoreFeatures.Take(5) en algunos productos |
-| Pluralización irregular | Baja | Category→categories, Company→companies no manejado en ResolveRoute |
+| `ToRoute` para "Menú" genera `/men` en producto existente Sprint21Restaurant | Baja | Fix aplicado al engine (futuros usan `/menu`), producto existente tiene `/men` en nav |
 | dashboard_premium idempotencia | Baja | Se aplica en cada request sin check |
 | SSE step coverage en HandleValidation/HandleDeploy | Baja | Pings OK, pero sin StepAsync en esos flujos |
 | Auth multi-user / roles | Media | Actualmente single demo user — un solo credential hardcoded por producto |
 | CRUD delete action | Baja | Solo create + read; no hay delete de registros persistidos |
+| Simulación: activity.json crecimiento | Baja | Sin TrimSimulated en activity → 835 records tras sesión larga; agregar cap en próximo sprint |
 
 ## Regla de oro del Builder Platform
 
 > **Un SaaS generado no está demo-ready si sus módulos siguen siendo CRUD genéricos.**
 
 La persona que abre el producto generado debe entender el negocio, las operaciones y los flujos en 5 segundos — sin leer documentación. Columnas operacionales reales + datos coherentes entre módulos + estados semánticos del dominio = product realism.
+
+> **Segunda regla: el nav-items.json debe usar rutas físicas reales, no nombres de entidades.**
+
+`ProjectAwarenessEngine` escanea entidades C# y no puede mapear automáticamente `"Table"` → `/mesas`. La fuente de verdad es `ScanFrontendRoutes()`. Todo nav generado desde entidades sin match directo produce 404.

@@ -1,6 +1,7 @@
 using BuilderPlatform.API.DTOs;
 using BuilderPlatform.Domain.Entities;
 using BuilderPlatform.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,6 +9,7 @@ namespace BuilderPlatform.API.Controllers;
 
 [ApiController]
 [Route("api/products/{productId:guid}/artifacts")]
+[Authorize]
 public class ArtifactsController(AppDbContext db) : ControllerBase
 {
     // GET /api/products/{productId}/artifacts

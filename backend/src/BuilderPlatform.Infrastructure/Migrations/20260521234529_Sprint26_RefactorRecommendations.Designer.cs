@@ -3,6 +3,7 @@ using System;
 using BuilderPlatform.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace BuilderPlatform.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260521234529_Sprint26_RefactorRecommendations")]
+    partial class Sprint26_RefactorRecommendations
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.4");
@@ -500,13 +503,6 @@ namespace BuilderPlatform.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTime?>("ExecutedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ExecutionError")
-                        .HasMaxLength(400)
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Impact")
                         .IsRequired()
                         .HasMaxLength(400)
@@ -642,45 +638,6 @@ namespace BuilderPlatform.Infrastructure.Migrations
                     b.HasIndex("ProductId");
 
                     b.ToTable("ScaffoldEntries");
-                });
-
-            modelBuilder.Entity("BuilderPlatform.Domain.Entities.SimulationRun", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("OpsGenerated")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<Guid>("ProductId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Scenario")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("operacion_normal");
-
-                    b.Property<DateTime>("StartedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("running");
-
-                    b.Property<DateTime?>("StoppedAt")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProductId");
-
-                    b.ToTable("SimulationRuns");
                 });
 
             modelBuilder.Entity("BuilderPlatform.Domain.Entities.ValidationRun", b =>
@@ -868,17 +825,6 @@ namespace BuilderPlatform.Infrastructure.Migrations
                     b.Navigation("Product");
                 });
 
-            modelBuilder.Entity("BuilderPlatform.Domain.Entities.SimulationRun", b =>
-                {
-                    b.HasOne("BuilderPlatform.Domain.Entities.Product", "Product")
-                        .WithMany("SimulationRuns")
-                        .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Product");
-                });
-
             modelBuilder.Entity("BuilderPlatform.Domain.Entities.ValidationRun", b =>
                 {
                     b.HasOne("BuilderPlatform.Domain.Entities.Product", "Product")
@@ -913,8 +859,6 @@ namespace BuilderPlatform.Infrastructure.Migrations
                     b.Navigation("ScaffoldChanges");
 
                     b.Navigation("ScaffoldEntries");
-
-                    b.Navigation("SimulationRuns");
 
                     b.Navigation("ValidationRuns");
                 });

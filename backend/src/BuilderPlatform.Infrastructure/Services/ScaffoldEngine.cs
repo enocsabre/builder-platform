@@ -128,11 +128,16 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         WriteFile(Path.Combine(appRoot, "api", "data", "[module]"), "route.ts",
             ApiDataRoute(), "typescript", entries, ref order);
 
+        // Workflow events API route
+        WriteFile(Path.Combine(appRoot, "api", "workflow"), "route.ts",
+            WorkflowApiRoute(profile.Industry), "typescript", entries, ref order);
+
         var componentsRoot = Path.Combine(feRoot, "components");
-        WriteFile(componentsRoot, "Sidebar.tsx",       SidebarServer(displayName),          "typescript", entries, ref order);
-        WriteFile(componentsRoot, "SidebarClient.tsx", SidebarClientComponent(displayName), "typescript", entries, ref order);
-        WriteFile(componentsRoot, "AppShell.tsx",      AppShellComponent(),                 "typescript", entries, ref order);
-        WriteFile(componentsRoot, "Header.tsx",        HeaderComponent(),                   "typescript", entries, ref order);
+        WriteFile(componentsRoot, "Sidebar.tsx",            SidebarServer(displayName),          "typescript", entries, ref order);
+        WriteFile(componentsRoot, "SidebarClient.tsx",      SidebarClientComponent(displayName), "typescript", entries, ref order);
+        WriteFile(componentsRoot, "AppShell.tsx",           AppShellComponent(),                 "typescript", entries, ref order);
+        WriteFile(componentsRoot, "Header.tsx",             HeaderComponent(),                   "typescript", entries, ref order);
+        WriteFile(componentsRoot, "DashboardRefresher.tsx", DashboardRefresherComponent(),       "typescript", entries, ref order);
 
         var libRoot = Path.Combine(feRoot, "lib");
         WriteFile(libRoot, "types.ts",  LibTypes(profile), "typescript", entries, ref order);
@@ -144,6 +149,14 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         var labelsJson = System.Text.Json.JsonSerializer.Serialize(
             ctx.EntityLabels, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         WriteFile(Path.Combine(feRoot, "registry"), "entity-labels.json", labelsJson, "json", entries, ref order);
+
+        // Registry seed — nav-items.json with correct hrefs matching scaffolded page directories
+        var navOpts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+        var navSeed = profile.CoreFeatures.Take(5)
+            .Select(f => new { label = f, href = "/" + ToRoute(f), icon = "Grid" })
+            .ToList();
+        WriteFile(Path.Combine(feRoot, "registry"), "nav-items.json",
+            System.Text.Json.JsonSerializer.Serialize(navSeed, navOpts), "json", entries, ref order);
     }
 
     // ── Docs scaffold ──────────────────────────────────────────────────────────
@@ -543,27 +556,145 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         var activityJs = string.Join(",\n    ", ctx.RecentActivity.Select(r =>
             $"{{ desc: \"{EscapeJs(r.Description)}\", when: \"{EscapeJs(r.When)}\", status: \"{EscapeJs(r.Status)}\", statusBg: \"{StatusBgVar(r.StatusColor)}\", statusColor: \"{StatusTextVar(r.StatusColor)}\" }}"));
 
-        return
-            """
+        var (fsImports, computeBody) = profile.Industry == "restaurant"
+            ? (
+                "readFileSync, existsSync",
+                """
+                  const dir     = join(process.cwd(), ".data");
+                  const pedidos = loadModule(dir, "pedidos-comandas");
+                  const mesas   = loadModule(dir, "mesas");
+                  const inv     = loadModule(dir, "inventario-compras");
+                  const hasData = pedidos.length > 0 || mesas.length > 0 || inv.length > 0;
+                  if (!hasData) return { kpis: DEMO_KPIS, isRealData: false };
+                  const active    = pedidos.filter(r => ["Pendiente","Preparando","En camino"].includes(r["Estado"] ?? "")).length;
+                  const inKitchen = pedidos.filter(r => r["Estado"] === "Preparando").length;
+                  const done      = pedidos.filter(r => r["Estado"] === "Entregado").length;
+                  const rawV      = pedidos.filter(r => r["Estado"] === "Entregado")
+                                     .reduce((s, r) => { const v = (r["Total"] ?? "").replace(/[^0-9]/g, ""); return s + (parseInt(v, 10) || 0); }, 0);
+                  const ventas    = `₡${rawV.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
+                  const occ       = mesas.filter(r => r["Estado"] === "Ocupada").length;
+                  const totM      = mesas.length;
+                  const lowSt     = inv.filter(r => { const st = (r["Estado"] ?? "").toLowerCase(); return st.includes("bajo") || st.includes("sin stock"); }).length;
+                  return {
+                    isRealData: true,
+                    kpis: [
+                      { label: "Ventas del día",  value: ventas,                                       trend: `${done} pedido${done !== 1 ? "s" : ""} completado${done !== 1 ? "s" : ""}`, trendColor: "var(--status-active-text)" },
+                      { label: "Órdenes activas", value: String(active),                               trend: inKitchen > 0 ? `${inKitchen} en cocina ahora` : "Cocina libre",              trendColor: active > 0 ? "var(--status-warn-text)" : "var(--foreground-muted)" },
+                      { label: "Mesas ocupadas",  value: totM > 0 ? `${occ} / ${totM}` : String(occ), trend: totM > 0 ? `${totM - occ} disponible${(totM - occ) !== 1 ? "s" : ""}` : "Sin datos de mesas", trendColor: "var(--foreground-muted)" },
+                      { label: "Stock bajo",      value: String(lowSt),                                trend: lowSt > 0 ? "Revisar inventario" : "Inventario OK",                          trendColor: lowSt > 0 ? "var(--status-danger-text)" : "var(--status-active-text)" },
+                    ]
+                  };
+                """
+              )
+            : (
+                "readFileSync, readdirSync, existsSync",
+                """
+                  const dir = join(process.cwd(), ".data");
+                  if (!existsSync(dir)) return { kpis: DEMO_KPIS, isRealData: false };
+                  const allFiles = readdirSync(dir).filter(f => f.endsWith(".json") && f !== "activity.json");
+                  const total = allFiles.reduce((s: number, f: string) => {
+                    try { return s + (JSON.parse(readFileSync(join(dir, f), "utf-8")) as unknown[]).length; } catch { return s; }
+                  }, 0);
+                  if (total === 0) return { kpis: DEMO_KPIS, isRealData: false };
+                  return {
+                    isRealData: true,
+                    kpis: [{ ...DEMO_KPIS[0], value: String(total), trend: "registros activos" }, ...DEMO_KPIS.slice(1)],
+                  };
+                """
+              );
+
+        return """
+            import DashboardRefresher from "@/components/DashboardRefresher";
+            import { __FS_IMPORTS__ } from "fs";
+            import { join } from "path";
+
+            export const dynamic = "force-dynamic";
+
+            type KpiRow = { label: string; value: string; trend: string; trendColor: string };
+            type ARow   = { desc: string; when: string; status: string; statusBg: string; statusColor: string };
+
+            const DEMO_KPIS: KpiRow[] = [
+              __KPIS_DEMO__
+            ];
+
+            function loadModule(dir: string, name: string): Array<Record<string, string>> {
+              try {
+                const f = join(dir, `${name}.json`);
+                return existsSync(f) ? (JSON.parse(readFileSync(f, "utf-8")) as Array<Record<string, string>>) : [];
+              } catch { return []; }
+            }
+
+            function computeKpis(): { kpis: KpiRow[]; isRealData: boolean } {
+              try {
+                __COMPUTE_KPIS_BODY__
+              } catch { return { kpis: DEMO_KPIS, isRealData: false }; }
+            }
+
+            function fmtWhen(iso: string): string {
+              try {
+                const d = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+                if (d < 1) return "ahora mismo";
+                if (d < 60) return `hace ${d} min`;
+                const h = Math.floor(d / 60);
+                return h < 24 ? `hace ${h}h` : "ayer";
+              } catch { return "hace un momento"; }
+            }
+            function lBg(c: string): string {
+              return c === "active" ? "var(--status-active-bg)" : c === "warn" ? "var(--status-warn-bg)" : c === "danger" ? "var(--status-danger-bg)" : "var(--status-info-bg)";
+            }
+            function lTxt(c: string): string {
+              return c === "active" ? "var(--status-active-text)" : c === "warn" ? "var(--status-warn-text)" : c === "danger" ? "var(--status-danger-text)" : "var(--status-info-text)";
+            }
+            function loadLive(): { rows: ARow[]; lastWhen: string | null } {
+              try {
+                const file = join(process.cwd(), ".data", "activity.json");
+                if (!existsSync(file)) return { rows: [], lastWhen: null };
+                const raw = JSON.parse(readFileSync(file, "utf-8")) as Array<Record<string, string>>;
+                const rows = raw.slice(0, 8).map(r => ({
+                  desc: r.desc ?? "",
+                  when: fmtWhen(r.when ?? ""),
+                  status: r.status ?? "Actualizado",
+                  statusBg:    lBg(r.statusColor  ?? "info"),
+                  statusColor: lTxt(r.statusColor ?? "info"),
+                }));
+                const lastWhen = raw[0]?.when ? fmtWhen(raw[0].when) : null;
+                return { rows, lastWhen };
+              } catch { return { rows: [], lastWhen: null }; }
+            }
+
             export default function DashboardPage() {
-              const kpis = [
-                __KPIS__
-              ];
-              const activity = [
+              const { kpis, isRealData }     = computeKpis();
+              const { rows: live, lastWhen } = loadLive();
+              const demo: ARow[] = [
                 __ACTIVITY__
               ];
+              const rows   = live.length > 0 ? live : demo;
+              const isLive = live.length > 0;
+
               return (
                 <div style={{ padding: "28px", maxWidth: "1200px" }}>
+                  <DashboardRefresher intervalMs={5000} />
                   <div style={{ marginBottom: "32px" }}>
-                    <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>
-                      __DISPLAY_NAME__
-                    </h1>
-                    <p style={{ fontSize: "13px", color: "var(--foreground-muted)" }}>Panel de control · actualizado ahora</p>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4px" }}>
+                      <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)" }}>
+                        __DISPLAY_NAME__
+                      </h1>
+                      {isRealData && (
+                        <span style={{ fontSize: "11px", color: "var(--status-active-text)", padding: "3px 10px", borderRadius: "99px", background: "var(--status-active-bg)", border: "1px solid var(--border)", marginTop: "2px", flexShrink: 0 }}>
+                          DATOS EN VIVO
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ fontSize: "13px", color: "var(--foreground-muted)" }}>
+                      Panel de control · {isRealData ? "calculado desde registros reales" : "datos demo"}
+                      {lastWhen && <span style={{ marginLeft: "8px", color: "var(--muted)" }}>· últ. actividad {lastWhen}</span>}
+                    </p>
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "16px", marginBottom: "32px" }}>
                     {kpis.map((kpi) => (
-                      <div key={kpi.label} style={{ padding: "22px", background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)" }}>
+                      <div key={kpi.label} style={{ padding: "22px", background: "var(--surface)", borderRadius: "12px", border: isRealData ? "1px solid var(--status-active-bg)" : "1px solid var(--border)", position: "relative" }}>
+                        {isRealData && <span style={{ position: "absolute", top: "14px", right: "14px", width: "6px", height: "6px", borderRadius: "50%", background: "var(--status-active-text)" }} />}
                         <p style={{ fontSize: "11px", fontWeight: "500", color: "var(--foreground-muted)", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.06em" }}>{kpi.label}</p>
                         <p style={{ fontSize: "26px", fontWeight: "700", color: "var(--foreground)", marginBottom: "6px", letterSpacing: "-0.02em" }}>{kpi.value}</p>
                         <p style={{ fontSize: "11px", color: kpi.trendColor }}>{kpi.trend}</p>
@@ -574,7 +705,10 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                   <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
                     <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <span style={{ fontSize: "14px", fontWeight: "600", color: "var(--foreground)" }}>Actividad reciente</span>
-                      <span style={{ fontSize: "11px", color: "var(--muted)", padding: "3px 10px", borderRadius: "99px", background: "var(--surface-elevated)", border: "1px solid var(--border)" }}>Datos demo</span>
+                      {isLive
+                        ? <span style={{ fontSize: "11px", color: "var(--status-active-text)", padding: "3px 10px", borderRadius: "99px", background: "var(--status-active-bg)", border: "1px solid var(--border)" }}>EN VIVO</span>
+                        : <span style={{ fontSize: "11px", color: "var(--muted)", padding: "3px 10px", borderRadius: "99px", background: "var(--surface-elevated)", border: "1px solid var(--border)" }}>Datos demo</span>
+                      }
                     </div>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead>
@@ -585,7 +719,7 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                         </tr>
                       </thead>
                       <tbody>
-                        {activity.map((row, i) => (
+                        {rows.map((row, i) => (
                           <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
                             <td style={{ padding: "13px 20px", fontSize: "13px", color: "var(--foreground)" }}>{row.desc}</td>
                             <td style={{ padding: "13px 20px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.when}</td>
@@ -600,10 +734,30 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                 </div>
               );
             }
-            """.Replace("__KPIS__", kpisJs)
+            """.Replace("__FS_IMPORTS__", fsImports)
+               .Replace("__KPIS_DEMO__", kpisJs)
                .Replace("__ACTIVITY__", activityJs)
-               .Replace("__DISPLAY_NAME__", displayName);
+               .Replace("__DISPLAY_NAME__", displayName)
+               .Replace("__COMPUTE_KPIS_BODY__", computeBody);
     }
+
+    private static string DashboardRefresherComponent() => """
+        "use client";
+        import { useEffect } from "react";
+        import { useRouter } from "next/navigation";
+
+        export default function DashboardRefresher({ intervalMs }: { intervalMs: number }) {
+          const router = useRouter();
+          useEffect(() => {
+            const refresh = () => router.refresh();
+            const id = setInterval(refresh, intervalMs);
+            const onVis = () => { if (document.visibilityState === "visible") refresh(); };
+            document.addEventListener("visibilitychange", onVis);
+            return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
+          }, [router, intervalMs]);
+          return null;
+        }
+        """;
 
     private static string LoginPage(string displayName, string demoEmail, string demoPassword) =>
         """
@@ -611,8 +765,10 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         import { useState } from "react";
         import { useRouter } from "next/navigation";
 
-        const DEMO_EMAIL = "__EMAIL__";
-        const DEMO_PASS  = "__PASSWORD__";
+        const APP_NAME    = "__DISPLAY_NAME__";
+        const APP_INITIAL = APP_NAME.charAt(0).toUpperCase();
+        const DEMO_EMAIL  = "__EMAIL__";
+        const DEMO_PASS   = "__PASSWORD__";
 
         export default function LoginPage() {
           const [email,    setEmail]    = useState(DEMO_EMAIL);
@@ -645,36 +801,52 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
           };
 
           return (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-              <div style={{ width: "100%", maxWidth: "400px", padding: "40px", background: "var(--surface)", borderRadius: "16px", border: "1px solid var(--border)" }}>
-                <h1 style={{ fontSize: "22px", fontWeight: "700", marginBottom: "4px", color: "var(--foreground)" }}>__DISPLAY_NAME__</h1>
-                <p style={{ color: "var(--foreground-muted)", fontSize: "13px", marginBottom: "24px" }}>Iniciá sesión para continuar</p>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "var(--background)" }}>
+              <div style={{ width: "100%", maxWidth: "400px", padding: "0 20px" }}>
+                <div style={{ background: "var(--surface)", borderRadius: "20px", border: "1px solid var(--border)", padding: "40px", boxShadow: "0 24px 64px rgba(0,0,0,0.35)" }}>
 
-                <div style={{ padding: "12px 14px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "10px", marginBottom: "24px" }}>
-                  <p style={{ fontSize: "10px", fontWeight: "600", color: "var(--muted)", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Credenciales demo</p>
-                  <p style={{ fontSize: "12px", fontFamily: "monospace", color: "var(--foreground)", marginBottom: "2px" }}>{DEMO_EMAIL}</p>
-                  <p style={{ fontSize: "12px", fontFamily: "monospace", color: "var(--foreground)" }}>{DEMO_PASS}</p>
+                  <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "28px" }}>
+                    <div style={{ width: "46px", height: "46px", borderRadius: "12px", background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", fontWeight: "700", color: "#fff", flexShrink: 0 }}>
+                      {APP_INITIAL}
+                    </div>
+                    <div>
+                      <h1 style={{ fontSize: "18px", fontWeight: "700", color: "var(--foreground)", lineHeight: "1.2", marginBottom: "2px" }}>{APP_NAME}</h1>
+                      <p style={{ color: "var(--foreground-muted)", fontSize: "12px" }}>Iniciá sesión para continuar</p>
+                    </div>
+                  </div>
+
+                  <div style={{ padding: "12px 14px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "10px", marginBottom: "24px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+                      <p style={{ fontSize: "10px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Acceso demo</p>
+                      <span style={{ fontSize: "10px", fontWeight: "600", padding: "2px 8px", borderRadius: "4px", background: "var(--status-info-bg)", color: "var(--status-info-text)" }}>DEMO</span>
+                    </div>
+                    <p style={{ fontSize: "12px", fontFamily: "monospace", color: "var(--foreground)", marginBottom: "2px" }}>{DEMO_EMAIL}</p>
+                    <p style={{ fontSize: "12px", fontFamily: "monospace", color: "var(--foreground)" }}>{DEMO_PASS}</p>
+                  </div>
+
+                  <form onSubmit={handleLogin}>
+                    <div style={{ marginBottom: "16px" }}>
+                      <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Email</label>
+                      <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus
+                        style={{ width: "100%", padding: "11px 14px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "14px", outline: "none" }} />
+                    </div>
+                    <div style={{ marginBottom: "20px" }}>
+                      <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Contraseña</label>
+                      <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
+                        style={{ width: "100%", padding: "11px 14px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "14px", outline: "none" }} />
+                    </div>
+                    {error && (
+                      <p style={{ fontSize: "12px", color: "var(--status-danger-text)", background: "var(--status-danger-bg)", padding: "9px 12px", borderRadius: "6px", marginBottom: "16px" }}>{error}</p>
+                    )}
+                    <button type="submit" disabled={loading}
+                      style={{ width: "100%", padding: "12px", background: loading ? "var(--surface-elevated)" : "var(--accent)", color: loading ? "var(--muted)" : "#fff", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: loading ? "not-allowed" : "pointer", transition: "background 0.15s" }}>
+                      {loading ? "Entrando..." : "Entrar"}
+                    </button>
+                  </form>
                 </div>
-
-                <form onSubmit={handleLogin}>
-                  <div style={{ marginBottom: "16px" }}>
-                    <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Email</label>
-                    <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus
-                      style={{ width: "100%", padding: "10px 14px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "14px", outline: "none" }} />
-                  </div>
-                  <div style={{ marginBottom: "20px" }}>
-                    <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Contraseña</label>
-                    <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
-                      style={{ width: "100%", padding: "10px 14px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "14px", outline: "none" }} />
-                  </div>
-                  {error && (
-                    <p style={{ fontSize: "12px", color: "var(--status-danger-text)", background: "var(--status-danger-bg)", padding: "8px 12px", borderRadius: "6px", marginBottom: "16px" }}>{error}</p>
-                  )}
-                  <button type="submit" disabled={loading}
-                    style={{ width: "100%", padding: "11px", background: loading ? "var(--surface-elevated)" : "var(--accent)", color: loading ? "var(--muted)" : "#fff", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: loading ? "not-allowed" : "pointer" }}>
-                    {loading ? "Entrando..." : "Entrar"}
-                  </button>
-                </form>
+                <p style={{ textAlign: "center", fontSize: "11px", color: "var(--muted)", marginTop: "16px", opacity: 0.6 }}>
+                  Generado por Builder Platform
+                </p>
               </div>
             </div>
           );
@@ -695,11 +867,16 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
             var cells = string.Join(", ", r.Cells.Select(c => $"\"{EscapeJs(c)}\""));
             return $"{{ cells: [{cells}], sc: \"{r.StatusColor}\" }}";
         }));
+        var transitionsJs = template.Transitions?.Length > 0
+            ? string.Join(",\n  ", template.Transitions.Select(t =>
+                $"{{ from: \"{EscapeJs(t.From)}\", to: \"{EscapeJs(t.To)}\", label: \"{EscapeJs(t.Label)}\", color: \"{t.ActionColor}\" }}"))
+            : "";
 
         return
             """
             "use client";
             import { useState, useEffect, useCallback } from "react";
+            import { Inbox, CheckCircle, Plus } from "lucide-react";
 
             const TITLE      = "__TITLE__";
             const ACTION     = "__ACTION__";
@@ -710,7 +887,12 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
               __ROWS__
             ] as { cells: string[]; sc: string }[];
 
-            type Row = { cells: string[]; sc: string };
+            type Row        = { id?: string; cells: string[]; sc: string };
+            type Transition = { from: string; to: string; label: string; color: string };
+            const TRANSITIONS: Transition[] = [__TRANSITIONS__];
+            const INITIAL_STATUS = TRANSITIONS.length > 0 ? TRANSITIONS[0].from  : "";
+            const INITIAL_SC     = TRANSITIONS.length > 0 ? TRANSITIONS[0].color : "info";
+
             const bg  = (c: string): string =>
               c === "active" ? "var(--status-active-bg)"   :
               c === "warn"   ? "var(--status-warn-bg)"     :
@@ -721,11 +903,13 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
               c === "danger" ? "var(--status-danger-text)" : "var(--status-info-text)";
 
             export default function __PASCAL__Page() {
-              const [savedRows, setSavedRows] = useState<Row[]>([]);
-              const [loadDone,  setLoadDone]  = useState(false);
-              const [showModal, setShowModal] = useState(false);
-              const [form,      setForm]      = useState<Record<string, string>>({});
-              const [saving,    setSaving]    = useState(false);
+              const [savedRows,  setSavedRows]  = useState<Row[]>([]);
+              const [loadDone,   setLoadDone]   = useState(false);
+              const [showModal,  setShowModal]  = useState(false);
+              const [form,       setForm]       = useState<Record<string, string>>({});
+              const [saving,     setSaving]     = useState(false);
+              const [toast,      setToast]      = useState<string | null>(null);
+              const [hoveredRow, setHoveredRow] = useState<string | null>(null);
 
               const load = useCallback(async () => {
                 try {
@@ -733,8 +917,9 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                   if (res.ok) {
                     const data = await res.json() as Array<Record<string, string>>;
                     setSavedRows(data.map(r => ({
+                      id:    r.id,
                       cells: COLS.map(c => r[c] || ""),
-                      sc: r["_sc"] || "info",
+                      sc:    r["_sc"] || "info",
                     })));
                   }
                 } catch {}
@@ -743,135 +928,228 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
 
               useEffect(() => { void load(); }, [load]);
 
+              useEffect(() => {
+                const id = setInterval(() => { void load(); }, 5000);
+                return () => clearInterval(id);
+              }, [load]);
+
+              useEffect(() => {
+                if (!toast) return;
+                const t = setTimeout(() => setToast(null), 3000);
+                return () => clearTimeout(t);
+              }, [toast]);
+
+              const formCols = COLS.filter((_, ci) => ci !== STATUS_COL);
+              const canSave  = !saving && (formCols.length === 0 || !!form[formCols[0]]?.trim());
+              const hasSaved    = savedRows.length > 0;
+              const hasDemoOnly = !hasSaved && DEMO_ROWS.length > 0;
+
               const save = async () => {
+                if (!canSave) return;
                 setSaving(true);
                 try {
+                  const payload: Record<string, string> = { ...form, _sc: INITIAL_SC };
+                  const sf = STATUS_COL >= 0 ? COLS[STATUS_COL] : undefined;
+                  if (sf && INITIAL_STATUS) payload[sf] = INITIAL_STATUS;
                   await fetch("/api/data/__ROUTE__", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ ...form, _sc: "info" }),
+                    body: JSON.stringify(payload),
                   });
                   setShowModal(false);
                   setForm({});
                   await load();
+                  setToast(`${TITLE} agregado correctamente`);
                 } finally { setSaving(false); }
               };
 
-              const formCols = COLS.filter((_, ci) => ci !== STATUS_COL);
+              const updateRecord = async (id: string, row: Row, t: Transition) => {
+                const sf = STATUS_COL >= 0 ? COLS[STATUS_COL] : undefined;
+                if (!sf) return;
+                await fetch("/api/data/__ROUTE__", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ id, [sf]: t.to, _sc: t.color }),
+                });
+                void fetch("/api/workflow", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    event: "transition",
+                    module: "__ROUTE__",
+                    row: Object.fromEntries(COLS.map((c, i) => [c, row.cells[i] ?? ""])),
+                    from: t.from,
+                    to:   t.to,
+                  }),
+                });
+                await load();
+                setToast(`${t.label} — estado actualizado`);
+              };
 
               return (
-                <div style={{ padding: "28px" }}>
+                <div style={{ padding: "28px", maxWidth: "1280px" }}>
                   <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
                       <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>{TITLE}</h1>
-                      <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>{KPI}</p>
+                      <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>
+                        {KPI}
+                        {hasSaved && <span style={{ marginLeft: "10px", color: "var(--status-active-text)", fontSize: "12px" }}>· {savedRows.length} registros reales</span>}
+                        {hasDemoOnly && <span style={{ marginLeft: "10px", color: "var(--muted)", fontSize: "12px" }}>· datos de ejemplo</span>}
+                      </p>
                     </div>
                     <button onClick={() => setShowModal(true)}
-                      style={{ padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                      style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                      <Plus size={14} />
                       {ACTION}
                     </button>
                   </div>
 
-                  <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: "var(--surface-elevated)", borderBottom: "1px solid var(--border)" }}>
-                          {COLS.map((col) => (
-                            <th key={col} style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{col}</th>
+                  {loadDone && !hasSaved && DEMO_ROWS.length === 0 ? (
+                    <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", padding: "64px 20px", textAlign: "center" }}>
+                      <Inbox size={40} style={{ color: "var(--muted)", display: "block", margin: "0 auto 12px" }} />
+                      <p style={{ fontSize: "16px", fontWeight: "600", color: "var(--foreground)", marginBottom: "6px" }}>Sin registros aún</p>
+                      <p style={{ fontSize: "13px", color: "var(--foreground-muted)", marginBottom: "24px" }}>Creá el primer {TITLE} para empezar a operar.</p>
+                      <button onClick={() => setShowModal(true)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 22px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                        <Plus size={14} />
+                        {ACTION}
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
+                      {hasDemoOnly && (
+                        <div style={{ padding: "8px 16px", background: "var(--surface-elevated)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span style={{ fontSize: "11px", color: "var(--muted)" }}>Datos de ejemplo — creá registros reales con <strong>{ACTION}</strong></span>
+                          <span style={{ fontSize: "10px", fontWeight: "600", padding: "2px 8px", borderRadius: "4px", background: "var(--status-info-bg)", color: "var(--status-info-text)" }}>DEMO</span>
+                        </div>
+                      )}
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr style={{ background: "var(--surface-elevated)", borderBottom: "1px solid var(--border)" }}>
+                            {COLS.map((col) => (
+                              <th key={col} style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{col}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {!loadDone && (
+                            <tr><td colSpan={COLS.length} style={{ padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>Cargando...</td></tr>
+                          )}
+                          {loadDone && savedRows.map((row, ri) => (
+                            <tr key={ri}
+                              onMouseEnter={() => setHoveredRow(`s${ri}`)}
+                              onMouseLeave={() => setHoveredRow(null)}
+                              style={{ borderTop: "1px solid var(--border)", background: hoveredRow === `s${ri}` ? "var(--surface-elevated)" : "transparent", transition: "background 0.1s" }}>
+                              {row.cells.map((cell, ci) => (
+                                <td key={ci} style={{ padding: "13px 16px" }}>
+                                  {STATUS_COL >= 0 && ci === STATUS_COL ? (
+                                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                      <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: txt(row.sc) }}>{cell}</span>
+                                      {TRANSITIONS.length > 0 && (() => {
+                                        const tr = TRANSITIONS.find(t => t.from === cell);
+                                        return tr && row.id ? (
+                                          <button onClick={() => void updateRecord(row.id!, row, tr)}
+                                            style={{ fontSize: "11px", padding: "3px 10px", borderRadius: "99px", background: "var(--surface-elevated)", color: "var(--foreground-muted)", border: "1px solid var(--border)", cursor: "pointer", whiteSpace: "nowrap" }}>
+                                            {tr.label} →
+                                          </button>
+                                        ) : null;
+                                      })()}
+                                    </div>
+                                  ) : (
+                                    <span style={{ fontSize: ci === 0 ? "13px" : "12px", fontWeight: ci === 0 ? "500" : "400", color: ci === 0 ? "var(--foreground)" : "var(--foreground-muted)" }}>{cell}</span>
+                                  )}
+                                </td>
+                              ))}
+                            </tr>
                           ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {!loadDone && (
-                          <tr><td colSpan={COLS.length} style={{ padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>Cargando...</td></tr>
-                        )}
-                        {loadDone && savedRows.length === 0 && DEMO_ROWS.length === 0 && (
-                          <tr><td colSpan={COLS.length} style={{ padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>Sin registros — usá {ACTION} para agregar el primero</td></tr>
-                        )}
-                        {loadDone && savedRows.map((row, ri) => (
-                          <tr key={ri} style={{ borderTop: "1px solid var(--border)" }}>
-                            {row.cells.map((cell, ci) => (
-                              <td key={ci} style={{ padding: "13px 16px" }}>
-                                {STATUS_COL >= 0 && ci === STATUS_COL ? (
-                                  <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: txt(row.sc) }}>{cell}</span>
-                                ) : (
-                                  <span style={{ fontSize: ci === 0 ? "13px" : "12px", fontWeight: ci === 0 ? "500" : "400", color: ci === 0 ? "var(--foreground)" : "var(--foreground-muted)" }}>{cell}</span>
-                                )}
+                          {loadDone && hasSaved && DEMO_ROWS.length > 0 && (
+                            <tr>
+                              <td colSpan={COLS.length} style={{ padding: "5px 16px", background: "var(--surface-elevated)", fontSize: "10px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                Datos demo
                               </td>
-                            ))}
-                          </tr>
-                        ))}
-                        {loadDone && savedRows.length > 0 && DEMO_ROWS.length > 0 && (
-                          <tr>
-                            <td colSpan={COLS.length} style={{ padding: "5px 16px", background: "var(--surface-elevated)", fontSize: "10px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                              Datos demo
-                            </td>
-                          </tr>
-                        )}
-                        {loadDone && DEMO_ROWS.map((row, ri) => (
-                          <tr key={"d" + ri} style={{ borderTop: "1px solid var(--border)", opacity: savedRows.length > 0 ? 0.4 : 1 }}>
-                            {row.cells.map((cell, ci) => (
-                              <td key={ci} style={{ padding: "13px 16px" }}>
-                                {STATUS_COL >= 0 && ci === STATUS_COL ? (
-                                  <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: txt(row.sc) }}>{cell}</span>
-                                ) : (
-                                  <span style={{ fontSize: ci === 0 ? "13px" : "12px", fontWeight: ci === 0 ? "500" : "400", color: ci === 0 ? "var(--foreground)" : "var(--foreground-muted)" }}>{cell}</span>
-                                )}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                            </tr>
+                          )}
+                          {loadDone && DEMO_ROWS.map((row, ri) => (
+                            <tr key={"d" + ri}
+                              onMouseEnter={() => setHoveredRow(`d${ri}`)}
+                              onMouseLeave={() => setHoveredRow(null)}
+                              style={{ borderTop: "1px solid var(--border)", opacity: hasSaved ? 0.35 : 1, background: hoveredRow === `d${ri}` ? "var(--surface-elevated)" : "transparent", transition: "background 0.1s" }}>
+                              {row.cells.map((cell, ci) => (
+                                <td key={ci} style={{ padding: "13px 16px" }}>
+                                  {STATUS_COL >= 0 && ci === STATUS_COL ? (
+                                    <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: txt(row.sc) }}>{cell}</span>
+                                  ) : (
+                                    <span style={{ fontSize: ci === 0 ? "13px" : "12px", fontWeight: ci === 0 ? "500" : "400", color: ci === 0 ? "var(--foreground)" : "var(--foreground-muted)" }}>{cell}</span>
+                                  )}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
 
                   {showModal && (
-                    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+                    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
                       onClick={() => setShowModal(false)}>
-                      <div style={{ background: "var(--surface)", borderRadius: "16px", padding: "28px", width: "440px", maxWidth: "90vw", border: "1px solid var(--border)" }}
+                      <div style={{ background: "var(--surface)", borderRadius: "16px", padding: "28px", width: "440px", maxWidth: "90vw", border: "1px solid var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}
                         onClick={e => e.stopPropagation()}>
-                        <h2 style={{ fontSize: "16px", fontWeight: "700", color: "var(--foreground)", marginBottom: "20px" }}>Nuevo registro — {TITLE}</h2>
-                        {formCols.map((col) => (
+                        <h2 style={{ fontSize: "16px", fontWeight: "700", color: "var(--foreground)", marginBottom: "6px" }}>{ACTION}</h2>
+                        <p style={{ fontSize: "12px", color: "var(--foreground-muted)", marginBottom: "20px" }}>Completá los campos y guardá.</p>
+                        {formCols.map((col, idx) => (
                           <div key={col} style={{ marginBottom: "14px" }}>
-                            <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>{col}</label>
+                            <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                              {col}{idx === 0 && <span style={{ color: "var(--status-danger-text)", marginLeft: "4px" }}>*</span>}
+                            </label>
                             <input
                               value={form[col] ?? ""}
                               onChange={e => setForm(prev => ({ ...prev, [col]: e.target.value }))}
-                              placeholder={col}
-                              style={{ width: "100%", padding: "9px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }}
+                              placeholder={`Ingresá ${col.toLowerCase()}...`}
+                              autoFocus={idx === 0}
+                              style={{ width: "100%", padding: "10px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }}
                             />
                           </div>
                         ))}
-                        <div style={{ display: "flex", gap: "8px", marginTop: "20px", justifyContent: "flex-end" }}>
-                          <button onClick={() => setShowModal(false)}
-                            style={{ padding: "8px 16px", borderRadius: "8px", background: "var(--surface-elevated)", color: "var(--foreground-muted)", border: "1px solid var(--border)", fontSize: "13px", cursor: "pointer" }}>
+                        <div style={{ display: "flex", gap: "8px", marginTop: "24px", justifyContent: "flex-end" }}>
+                          <button onClick={() => { setShowModal(false); setForm({}); }}
+                            style={{ padding: "9px 16px", borderRadius: "8px", background: "var(--surface-elevated)", color: "var(--foreground-muted)", border: "1px solid var(--border)", fontSize: "13px", cursor: "pointer" }}>
                             Cancelar
                           </button>
-                          <button onClick={save} disabled={saving}
-                            style={{ padding: "8px 20px", borderRadius: "8px", background: "var(--accent)", color: "#fff", border: "none", fontSize: "13px", fontWeight: "600", cursor: saving ? "not-allowed" : "pointer" }}>
+                          <button onClick={save} disabled={!canSave}
+                            style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 20px", borderRadius: "8px", background: canSave ? "var(--accent)" : "var(--surface-elevated)", color: canSave ? "#fff" : "var(--muted)", border: "none", fontSize: "13px", fontWeight: "600", cursor: canSave ? "pointer" : "not-allowed" }}>
                             {saving ? "Guardando..." : "Guardar"}
                           </button>
                         </div>
                       </div>
                     </div>
                   )}
+
+                  {toast && (
+                    <div style={{ position: "fixed", bottom: "24px", right: "24px", background: "var(--surface)", border: "1px solid var(--status-active-bg)", borderRadius: "10px", padding: "12px 16px", display: "flex", alignItems: "center", gap: "10px", zIndex: 200, boxShadow: "0 4px 24px rgba(0,0,0,0.4)" }}>
+                      <CheckCircle size={16} style={{ color: "var(--status-active-text)", flexShrink: 0 }} />
+                      <span style={{ fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{toast}</span>
+                    </div>
+                  )}
                 </div>
               );
             }
-            """.Replace("__PASCAL__",     ToPascalCase(route))
-               .Replace("__TITLE__",      EscapeJs(template.Title))
-               .Replace("__ACTION__",     EscapeJs(template.ActionLabel))
-               .Replace("__KPI_BAR__",    EscapeJs(template.KpiBar))
-               .Replace("__STATUS_COL__", template.StatusColumnIndex.ToString())
-               .Replace("__COLS__",       colsJs)
-               .Replace("__ROWS__",       rowsJs)
-               .Replace("__ROUTE__",      route);
+            """.Replace("__PASCAL__",      ToPascalCase(route))
+               .Replace("__TITLE__",       EscapeJs(template.Title))
+               .Replace("__ACTION__",      EscapeJs(template.ActionLabel))
+               .Replace("__KPI_BAR__",     EscapeJs(template.KpiBar))
+               .Replace("__STATUS_COL__",  template.StatusColumnIndex.ToString())
+               .Replace("__COLS__",        colsJs)
+               .Replace("__ROWS__",        rowsJs)
+               .Replace("__TRANSITIONS__", transitionsJs)
+               .Replace("__ROUTE__",       route);
     }
 
     private static string GenericFeaturePage(string feature, string route) =>
         ("""
         "use client";
         import { useState, useEffect, useCallback } from "react";
+        import { Inbox, CheckCircle, Plus } from "lucide-react";
 
         const DEMO_ROWS = [
           { name: "Demo Item 1", status: "Activo",     date: "2026-05-15", sc: "active" },
@@ -884,11 +1162,13 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         type GRow = { name: string; status: string; date: string; sc: string };
 
         export default function __PASCAL__Page() {
-          const [savedRows, setSavedRows] = useState<GRow[]>([]);
-          const [loadDone,  setLoadDone]  = useState(false);
-          const [showModal, setShowModal] = useState(false);
-          const [form,      setForm]      = useState({ name: "", status: "Activo" });
-          const [saving,    setSaving]    = useState(false);
+          const [savedRows,  setSavedRows]  = useState<GRow[]>([]);
+          const [loadDone,   setLoadDone]   = useState(false);
+          const [showModal,  setShowModal]  = useState(false);
+          const [form,       setForm]       = useState({ name: "", status: "Activo" });
+          const [saving,     setSaving]     = useState(false);
+          const [toast,      setToast]      = useState<string | null>(null);
+          const [hoveredRow, setHoveredRow] = useState<string | null>(null);
 
           const load = useCallback(async () => {
             try {
@@ -903,7 +1183,22 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
 
           useEffect(() => { void load(); }, [load]);
 
+          useEffect(() => {
+            const id = setInterval(() => { void load(); }, 5000);
+            return () => clearInterval(id);
+          }, [load]);
+
+          useEffect(() => {
+            if (!toast) return;
+            const t = setTimeout(() => setToast(null), 3000);
+            return () => clearTimeout(t);
+          }, [toast]);
+
+          const canSave = !saving && !!form.name.trim();
+          const hasSaved = savedRows.length > 0;
+
           const save = async () => {
+            if (!canSave) return;
             setSaving(true);
             try {
               await fetch("/api/data/__ROUTE__", {
@@ -914,6 +1209,7 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
               setShowModal(false);
               setForm({ name: "", status: "Activo" });
               await load();
+              setToast("Registro agregado correctamente");
             } finally { setSaving(false); }
           };
 
@@ -922,83 +1218,118 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
               <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
                   <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>__FEATURE__</h1>
-                  <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>Módulo generado · datos persistentes</p>
+                  <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>
+                    Módulo generado · datos persistentes
+                    {hasSaved && <span style={{ marginLeft: "10px", color: "var(--status-active-text)", fontSize: "12px" }}>· {savedRows.length} registros</span>}
+                  </p>
                 </div>
                 <button onClick={() => setShowModal(true)}
-                  style={{ padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                  style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                  <Plus size={14} />
                   Nuevo
                 </button>
               </div>
-              <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: "var(--surface-elevated)", borderBottom: "1px solid var(--border)" }}>
-                      <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Nombre</th>
-                      <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estado</th>
-                      <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Fecha</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!loadDone && (
-                      <tr><td colSpan={3} style={{ padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>Cargando...</td></tr>
-                    )}
-                    {loadDone && savedRows.map((row, i) => (
-                      <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
-                        <td style={{ padding: "14px 16px", fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{row.name}</td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: text(row.sc) }}>{row.status}</span>
-                        </td>
-                        <td style={{ padding: "14px 16px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.date}</td>
+
+              {loadDone && !hasSaved ? (
+                <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", padding: "64px 20px", textAlign: "center" }}>
+                  <Inbox size={40} style={{ color: "var(--muted)", display: "block", margin: "0 auto 12px" }} />
+                  <p style={{ fontSize: "16px", fontWeight: "600", color: "var(--foreground)", marginBottom: "6px" }}>Sin registros aún</p>
+                  <p style={{ fontSize: "13px", color: "var(--foreground-muted)", marginBottom: "24px" }}>Creá el primer registro de __FEATURE__.</p>
+                  <button onClick={() => setShowModal(true)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 22px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                    <Plus size={14} />
+                    Nuevo registro
+                  </button>
+                </div>
+              ) : (
+                <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ background: "var(--surface-elevated)", borderBottom: "1px solid var(--border)" }}>
+                        <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Nombre</th>
+                        <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estado</th>
+                        <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Fecha</th>
                       </tr>
-                    ))}
-                    {loadDone && savedRows.length > 0 && (
-                      <tr><td colSpan={3} style={{ padding: "5px 16px", background: "var(--surface-elevated)", fontSize: "10px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Datos demo</td></tr>
-                    )}
-                    {loadDone && DEMO_ROWS.map((row) => (
-                      <tr key={row.name} style={{ borderTop: "1px solid var(--border)", opacity: savedRows.length > 0 ? 0.4 : 1 }}>
-                        <td style={{ padding: "14px 16px", fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{row.name}</td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: text(row.sc) }}>{row.status}</span>
-                        </td>
-                        <td style={{ padding: "14px 16px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.date}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {!loadDone && (
+                        <tr><td colSpan={3} style={{ padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>Cargando...</td></tr>
+                      )}
+                      {loadDone && savedRows.map((row, i) => (
+                        <tr key={i}
+                          onMouseEnter={() => setHoveredRow(`s${i}`)}
+                          onMouseLeave={() => setHoveredRow(null)}
+                          style={{ borderTop: "1px solid var(--border)", background: hoveredRow === `s${i}` ? "var(--surface-elevated)" : "transparent", transition: "background 0.1s" }}>
+                          <td style={{ padding: "14px 16px", fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{row.name}</td>
+                          <td style={{ padding: "14px 16px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: text(row.sc) }}>{row.status}</span>
+                          </td>
+                          <td style={{ padding: "14px 16px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.date}</td>
+                        </tr>
+                      ))}
+                      {loadDone && hasSaved && (
+                        <tr><td colSpan={3} style={{ padding: "5px 16px", background: "var(--surface-elevated)", fontSize: "10px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Datos demo</td></tr>
+                      )}
+                      {loadDone && DEMO_ROWS.map((row, i) => (
+                        <tr key={row.name}
+                          onMouseEnter={() => setHoveredRow(`d${i}`)}
+                          onMouseLeave={() => setHoveredRow(null)}
+                          style={{ borderTop: "1px solid var(--border)", opacity: hasSaved ? 0.35 : 1, background: hoveredRow === `d${i}` ? "var(--surface-elevated)" : "transparent", transition: "background 0.1s" }}>
+                          <td style={{ padding: "14px 16px", fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{row.name}</td>
+                          <td style={{ padding: "14px 16px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: "500", padding: "3px 10px", borderRadius: "99px", background: bg(row.sc), color: text(row.sc) }}>{row.status}</span>
+                          </td>
+                          <td style={{ padding: "14px 16px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.date}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {showModal && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
                   onClick={() => setShowModal(false)}>
-                  <div style={{ background: "var(--surface)", borderRadius: "16px", padding: "28px", width: "400px", maxWidth: "90vw", border: "1px solid var(--border)" }}
+                  <div style={{ background: "var(--surface)", borderRadius: "16px", padding: "28px", width: "400px", maxWidth: "90vw", border: "1px solid var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}
                     onClick={e => e.stopPropagation()}>
-                    <h2 style={{ fontSize: "16px", fontWeight: "700", color: "var(--foreground)", marginBottom: "20px" }}>Nuevo — __FEATURE__</h2>
+                    <h2 style={{ fontSize: "16px", fontWeight: "700", color: "var(--foreground)", marginBottom: "6px" }}>Nuevo registro</h2>
+                    <p style={{ fontSize: "12px", color: "var(--foreground-muted)", marginBottom: "20px" }}>__FEATURE__ · completá los campos y guardá.</p>
                     <div style={{ marginBottom: "14px" }}>
-                      <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Nombre</label>
+                      <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        Nombre <span style={{ color: "var(--status-danger-text)" }}>*</span>
+                      </label>
                       <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                        placeholder="Nombre del registro"
-                        style={{ width: "100%", padding: "9px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }} />
+                        placeholder="Ingresá un nombre..."
+                        autoFocus
+                        style={{ width: "100%", padding: "10px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }} />
                     </div>
                     <div style={{ marginBottom: "14px" }}>
                       <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estado</label>
                       <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))}
-                        style={{ width: "100%", padding: "9px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }}>
+                        style={{ width: "100%", padding: "10px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }}>
                         <option>Activo</option>
                         <option>Pendiente</option>
                         <option>Completado</option>
                       </select>
                     </div>
-                    <div style={{ display: "flex", gap: "8px", marginTop: "20px", justifyContent: "flex-end" }}>
-                      <button onClick={() => setShowModal(false)}
-                        style={{ padding: "8px 16px", borderRadius: "8px", background: "var(--surface-elevated)", color: "var(--foreground-muted)", border: "1px solid var(--border)", fontSize: "13px", cursor: "pointer" }}>
+                    <div style={{ display: "flex", gap: "8px", marginTop: "24px", justifyContent: "flex-end" }}>
+                      <button onClick={() => { setShowModal(false); setForm({ name: "", status: "Activo" }); }}
+                        style={{ padding: "9px 16px", borderRadius: "8px", background: "var(--surface-elevated)", color: "var(--foreground-muted)", border: "1px solid var(--border)", fontSize: "13px", cursor: "pointer" }}>
                         Cancelar
                       </button>
-                      <button onClick={save} disabled={saving}
-                        style={{ padding: "8px 20px", borderRadius: "8px", background: "var(--accent)", color: "#fff", border: "none", fontSize: "13px", fontWeight: "600", cursor: saving ? "not-allowed" : "pointer" }}>
+                      <button onClick={save} disabled={!canSave}
+                        style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 20px", borderRadius: "8px", background: canSave ? "var(--accent)" : "var(--surface-elevated)", color: canSave ? "#fff" : "var(--muted)", border: "none", fontSize: "13px", fontWeight: "600", cursor: canSave ? "pointer" : "not-allowed" }}>
                         {saving ? "Guardando..." : "Guardar"}
                       </button>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {toast && (
+                <div style={{ position: "fixed", bottom: "24px", right: "24px", background: "var(--surface)", border: "1px solid var(--status-active-bg)", borderRadius: "10px", padding: "12px 16px", display: "flex", alignItems: "center", gap: "10px", zIndex: 200, boxShadow: "0 4px 24px rgba(0,0,0,0.4)" }}>
+                  <CheckCircle size={16} style={{ color: "var(--status-active-text)", flexShrink: 0 }} />
+                  <span style={{ fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{toast}</span>
                 </div>
               )}
             </div>
@@ -1039,11 +1370,13 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
         "use client";
         import Link from "next/link";
         import { usePathname } from "next/navigation";
+        import { useState } from "react";
 
         interface NavItem { href: string; label: string; }
 
         export function SidebarClient({ displayName, navItems }: { displayName: string; navItems: NavItem[] }) {
-          const pathname = usePathname();
+          const pathname    = usePathname();
+          const [hovered, setHovered] = useState<string | null>(null);
           return (
             <aside style={{ width: "220px", flexShrink: 0, background: "var(--surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column" }}>
               <div style={{ padding: "18px 16px 14px", borderBottom: "1px solid var(--border)" }}>
@@ -1051,13 +1384,19 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
               </div>
               <nav style={{ padding: "8px", flex: 1 }}>
                 {navItems.map(({ href, label }) => {
-                  const active = pathname === href || (href !== "/" && pathname.startsWith(href));
+                  const active  = pathname === href || (href !== "/" && pathname.startsWith(href));
+                  const isHover = hovered === href && !active;
                   return (
                     <Link key={href} href={href}
+                      onMouseEnter={() => setHovered(href)}
+                      onMouseLeave={() => setHovered(null)}
                       style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderRadius: "8px", marginBottom: "2px",
                         fontSize: "13px", fontWeight: active ? "600" : "400",
-                        background: active ? "var(--surface-elevated)" : "transparent",
-                        color: active ? "var(--foreground)" : "var(--muted)" }}>
+                        background: active ? "var(--surface-elevated)" : isHover ? "rgba(255,255,255,0.04)" : "transparent",
+                        color: active ? "var(--foreground)" : isHover ? "var(--foreground)" : "var(--muted)",
+                        borderLeft: active ? "3px solid var(--accent)" : "3px solid transparent",
+                        paddingLeft: active ? "9px" : "12px",
+                        transition: "background 0.1s, color 0.1s" }}>
                       {label}
                     </Link>
                   );
@@ -1214,8 +1553,8 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
           context: { params: Promise<{ module: string }> }
         ) {
           const { module } = await context.params;
-          const body   = await req.json() as Record<string, string>;
-          const file   = dataFile(module);
+          const body    = await req.json() as Record<string, string>;
+          const file    = dataFile(module);
           const records = existsSync(file)
             ? JSON.parse(readFileSync(file, "utf-8")) as unknown[]
             : [];
@@ -1224,7 +1563,93 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
           writeFileSync(file, JSON.stringify(records, null, 2));
           return NextResponse.json(record, { status: 201 });
         }
+
+        export async function PATCH(
+          req: Request,
+          context: { params: Promise<{ module: string }> }
+        ) {
+          const { module } = await context.params;
+          const body    = await req.json() as { id: string } & Record<string, string>;
+          const file    = dataFile(module);
+          if (!existsSync(file)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+          const records = JSON.parse(readFileSync(file, "utf-8")) as Array<Record<string, string>>;
+          const idx     = records.findIndex(r => r.id === body.id);
+          if (idx === -1) return NextResponse.json({ error: "Not found" }, { status: 404 });
+          records[idx] = { ...records[idx], ...body };
+          writeFileSync(file, JSON.stringify(records, null, 2));
+          return NextResponse.json(records[idx]);
+        }
         """;
+
+    private static string WorkflowApiRoute(string industry)
+    {
+        var handlers = industry switch
+        {
+            "restaurant" => """
+                if (module === "pedidos-comandas" && from === "Pendiente" && to === "Preparando")
+                  appendActivity(`Orden ${row["Orden"] ?? "#?"} · Mesa ${row["Mesa"] ?? "?"} — enviada a cocina`, "En preparación", "warn");
+                else if (module === "pedidos-comandas" && from === "Preparando" && to === "En camino")
+                  appendActivity(`Orden ${row["Orden"] ?? "#?"} · ${row["Ítems"] ?? ""} — lista para servir`, "Lista", "active");
+                else if (module === "pedidos-comandas" && from === "En camino" && to === "Entregado")
+                  appendActivity(`Orden ${row["Orden"] ?? "#?"} · Mesa ${row["Mesa"] ?? "?"} — entregada al cliente`, "Entregado", "active");
+                else if (module === "display" && from === "Recibida" && to === "En preparación")
+                  appendActivity(`KDS · Orden ${row["Orden"] ?? "#?"} — en preparación`, "Preparando", "warn");
+                else if (module === "display" && from === "En preparación" && to === "Lista")
+                  appendActivity(`KDS · Orden ${row["Orden"] ?? "#?"} — lista para entregar`, "Lista", "active");
+                else if (module === "display" && from === "Lista" && to === "Entregada")
+                  appendActivity(`KDS · Orden ${row["Orden"] ?? "#?"} — entregada`, "Entregado", "active");
+                else
+                  appendActivity(`${module} — ${from} → ${to}`, "Actualizado", "info");
+                """,
+            "veterinary" => """
+                if (module === "citas" && from === "Programada" && to === "En consulta")
+                  appendActivity(`Cita · ${row["Paciente"] ?? "?"} — en consulta`, "En consulta", "info");
+                else if (module === "citas" && from === "En consulta" && to === "Completada")
+                  appendActivity(`Cita · ${row["Paciente"] ?? "?"} — completada`, "Completado", "active");
+                else
+                  appendActivity(`${module} — ${from} → ${to}`, "Actualizado", "info");
+                """,
+            "hr_payroll" => """
+                if (from && to)
+                  appendActivity(`${module} · ${row["Nombre"] ?? row["Empleado"] ?? "?"} — ${from} → ${to}`, "Actualizado", "info");
+                else
+                  appendActivity(`${module} — registrado`, "Activo", "active");
+                """,
+            _ => """
+                appendActivity(`${module} — ${from} → ${to}`, "Actualizado", "info");
+                """
+        };
+
+        return ("""
+            import { NextResponse } from "next/server";
+            import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+            import { join } from "path";
+
+            function ensureDir(): string {
+              const dir = join(process.cwd(), ".data");
+              if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+              return dir;
+            }
+
+            function appendActivity(desc: string, status: string, statusColor: string): void {
+              const file  = join(ensureDir(), "activity.json");
+              const items = (existsSync(file)
+                ? JSON.parse(readFileSync(file, "utf-8")) as unknown[]
+                : []) as Array<Record<string, string>>;
+              items.unshift({ desc, status, statusColor, when: new Date().toISOString(), id: Date.now().toString() });
+              if (items.length > 50) items.splice(50);
+              writeFileSync(file, JSON.stringify(items, null, 2));
+            }
+
+            type WfBody = { event: string; module: string; row: Record<string, string>; from: string; to: string };
+
+            export async function POST(req: Request) {
+              const { module, row, from, to } = await req.json() as WfBody;
+              __HANDLERS__
+              return NextResponse.json({ ok: true });
+            }
+            """).Replace("__HANDLERS__", handlers);
+    }
 
     private static string FrontendGitIgnore() => """
         .next/
@@ -1401,8 +1826,8 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
 
     private static string ToRoute(string feature) =>
         Regex.Replace(
-            feature.ToLowerInvariant()
-                   .Replace("gestión de ", "").Replace("gestión ", "")
+            NormalizeForPath(feature.ToLowerInvariant())
+                   .Replace("gestion de ", "").Replace("gestion ", "")
                    .Replace(" y ", "-").Split(' ')
                    .FirstOrDefault(w => w.Length >= 3) ?? "module",
             @"[^a-z0-9-]", "");
@@ -1637,47 +2062,158 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
     private static string DeltaFeaturePage(string featureName, string pascal, string route) =>
         ("""
         "use client";
-        import { Header } from "@/components/Header";
+        import { useState, useEffect, useCallback } from "react";
+        import { Inbox, CheckCircle, Plus } from "lucide-react";
+
+        type DRow = { id?: string; name: string; description: string; date: string };
 
         export default function __PASCAL__Page() {
+          const [rows,       setRows]       = useState<DRow[]>([]);
+          const [loadDone,   setLoadDone]   = useState(false);
+          const [showModal,  setShowModal]  = useState(false);
+          const [form,       setForm]       = useState({ name: "", description: "" });
+          const [saving,     setSaving]     = useState(false);
+          const [toast,      setToast]      = useState<string | null>(null);
+          const [hoveredRow, setHoveredRow] = useState<number | null>(null);
+
+          const load = useCallback(async () => {
+            try {
+              const res = await fetch("/api/data/__ROUTE__");
+              if (res.ok) setRows(await res.json() as DRow[]);
+            } catch {}
+            finally { setLoadDone(true); }
+          }, []);
+
+          useEffect(() => { void load(); }, [load]);
+
+          useEffect(() => {
+            const id = setInterval(() => { void load(); }, 5000);
+            return () => clearInterval(id);
+          }, [load]);
+
+          useEffect(() => {
+            if (!toast) return;
+            const t = setTimeout(() => setToast(null), 3000);
+            return () => clearTimeout(t);
+          }, [toast]);
+
+          const canSave = !saving && !!form.name.trim();
+
+          const save = async () => {
+            if (!canSave) return;
+            setSaving(true);
+            try {
+              await fetch("/api/data/__ROUTE__", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...form, date: new Date().toISOString().slice(0, 10) }),
+              });
+              setShowModal(false);
+              setForm({ name: "", description: "" });
+              await load();
+              setToast("__FEATURE__ agregado correctamente");
+            } finally { setSaving(false); }
+          };
+
           return (
-            <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-              <Header title="__FEATURE__" />
-              <main style={{ flex: 1, overflow: "auto", padding: "24px" }}>
-                <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <h1 style={{ fontSize: "20px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>
-                      __FEATURE__
-                    </h1>
-                    <p style={{ fontSize: "13px", color: "var(--muted)" }}>
-                      Módulo generado automáticamente — implementá la lógica de negocio aquí.
-                    </p>
-                  </div>
-                  <button style={{ padding: "8px 16px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+            <div style={{ padding: "28px" }}>
+              <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <h1 style={{ fontSize: "22px", fontWeight: "700", color: "var(--foreground)", marginBottom: "4px" }}>__FEATURE__</h1>
+                  <p style={{ color: "var(--foreground-muted)", fontSize: "13px" }}>
+                    {rows.length > 0 ? `${rows.length} registro${rows.length !== 1 ? "s" : ""}` : "Módulo listo para recibir datos"}
+                  </p>
+                </div>
+                <button onClick={() => setShowModal(true)}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 18px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                  <Plus size={14} />
+                  Nuevo __FEATURE__
+                </button>
+              </div>
+
+              {loadDone && rows.length === 0 ? (
+                <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", padding: "64px 20px", textAlign: "center" }}>
+                  <Inbox size={40} style={{ color: "var(--muted)", display: "block", margin: "0 auto 12px" }} />
+                  <p style={{ fontSize: "16px", fontWeight: "600", color: "var(--foreground)", marginBottom: "6px" }}>Sin registros aún</p>
+                  <p style={{ fontSize: "13px", color: "var(--foreground-muted)", marginBottom: "24px" }}>Creá el primer elemento para empezar.</p>
+                  <button onClick={() => setShowModal(true)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 22px", borderRadius: "8px", background: "var(--accent)", color: "#fff", fontSize: "13px", fontWeight: "600", border: "none", cursor: "pointer" }}>
+                    <Plus size={14} />
                     Nuevo __FEATURE__
                   </button>
                 </div>
-
-                <div style={{ borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
+              ) : !loadDone ? (
+                <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>
+                  Cargando...
+                </div>
+              ) : (
+                <div style={{ background: "var(--surface)", borderRadius: "12px", border: "1px solid var(--border)", overflow: "hidden" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
-                      <tr style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
+                      <tr style={{ background: "var(--surface-elevated)", borderBottom: "1px solid var(--border)" }}>
                         <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Nombre</th>
-                        <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estado</th>
-                        <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Creado</th>
-                        <th style={{ padding: "12px 16px", textAlign: "right", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Acciones</th>
+                        <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Descripción</th>
+                        <th style={{ padding: "12px 16px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Fecha</th>
                       </tr>
                     </thead>
                     <tbody>
-                      <tr>
-                        <td colSpan={4} style={{ padding: "48px 16px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>
-                          Sin datos — conectá el controller de __FEATURE__ con tu AppDbContext.
-                        </td>
-                      </tr>
+                      {rows.map((row, i) => (
+                        <tr key={row.id ?? i}
+                          onMouseEnter={() => setHoveredRow(i)}
+                          onMouseLeave={() => setHoveredRow(null)}
+                          style={{ borderTop: "1px solid var(--border)", background: hoveredRow === i ? "var(--surface-elevated)" : "transparent", transition: "background 0.1s" }}>
+                          <td style={{ padding: "14px 16px", fontSize: "13px", fontWeight: "500", color: "var(--foreground)" }}>{row.name}</td>
+                          <td style={{ padding: "14px 16px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.description || "—"}</td>
+                          <td style={{ padding: "14px 16px", fontSize: "12px", color: "var(--foreground-muted)" }}>{row.date}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-              </main>
+              )}
+
+              {showModal && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+                  onClick={() => setShowModal(false)}>
+                  <div style={{ background: "var(--surface)", borderRadius: "16px", padding: "28px", width: "420px", maxWidth: "90vw", border: "1px solid var(--border)", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}
+                    onClick={e => e.stopPropagation()}>
+                    <h2 style={{ fontSize: "16px", fontWeight: "700", color: "var(--foreground)", marginBottom: "6px" }}>Nuevo __FEATURE__</h2>
+                    <p style={{ fontSize: "12px", color: "var(--foreground-muted)", marginBottom: "20px" }}>Completá los campos y guardá.</p>
+                    <div style={{ marginBottom: "14px" }}>
+                      <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        Nombre <span style={{ color: "var(--status-danger-text)" }}>*</span>
+                      </label>
+                      <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                        placeholder="Ingresá un nombre..."
+                        autoFocus
+                        style={{ width: "100%", padding: "10px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }} />
+                    </div>
+                    <div style={{ marginBottom: "14px" }}>
+                      <label style={{ display: "block", fontSize: "11px", fontWeight: "600", color: "var(--muted)", marginBottom: "5px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Descripción</label>
+                      <input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+                        placeholder="Descripción opcional..."
+                        style={{ width: "100%", padding: "10px 12px", background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--foreground)", fontSize: "13px", outline: "none" }} />
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", marginTop: "24px", justifyContent: "flex-end" }}>
+                      <button onClick={() => { setShowModal(false); setForm({ name: "", description: "" }); }}
+                        style={{ padding: "9px 16px", borderRadius: "8px", background: "var(--surface-elevated)", color: "var(--foreground-muted)", border: "1px solid var(--border)", fontSize: "13px", cursor: "pointer" }}>
+                        Cancelar
+                      </button>
+                      <button onClick={save} disabled={!canSave}
+                        style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 20px", borderRadius: "8px", background: canSave ? "var(--accent)" : "var(--surface-elevated)", color: canSave ? "#fff" : "var(--muted)", border: "none", fontSize: "13px", fontWeight: "600", cursor: canSave ? "pointer" : "not-allowed" }}>
+                        {saving ? "Guardando..." : "Guardar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {toast && (
+                <div style={{ position: "fixed", bottom: "24px", right: "24px", background: "var(--surface)", border: "1px solid var(--status-active-bg)", borderRadius: "10px", padding: "12px 16px", display: "flex", alignItems: "center", gap: "10px", zIndex: 200, boxShadow: "0 4px 24px rgba(0,0,0,0.4)" }}>
+                  <CheckCircle size={16} style={{ color: "var(--status-active-text)", flexShrink: 0 }} />
+                  <span style={{ fontSize: "13px", color: "var(--foreground)", fontWeight: "500" }}>{toast}</span>
+                </div>
+              )}
             </div>
           );
         }

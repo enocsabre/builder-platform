@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, ExternalLink, Send, Check, X,
   Clock, Activity, CheckSquare, MessageSquare, Database,
-  FileText, ExternalLink as ArtifactLink, FolderOpen, Zap, Map, Monitor, HardDrive, Shield, Rocket,
+  FileText, ExternalLink as ArtifactLink, FolderOpen, Zap, Map, Monitor, HardDrive, Shield, Rocket, Brain, Wrench, Cpu,
 } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -18,6 +18,9 @@ import PreviewPanel from "@/components/PreviewPanel";
 import FilesPanel from "@/components/FilesPanel";
 import QualityPanel from "@/components/QualityPanel";
 import DeployPanel from "@/components/DeployPanel";
+import { EvolutionPanel } from "@/components/EvolutionPanel";
+import { RefactorPanel } from "@/components/RefactorPanel";
+import { SimulationPanel } from "@/components/SimulationPanel";
 import { api } from "@/lib/api";
 import type {
   ProductDetail, Message, Activity as ActivityEvent,
@@ -83,9 +86,25 @@ const activityIcon: Record<string, string> = {
   ErrorOccurred:           "❌",
   StatusChanged:           "🔄",
   MessageSent:             "💬",
-  VSCodeOpenRequested:     "📂",
-  VSCodeOpenSucceeded:     "🖥️",
-  VSCodeOpenFailed:        "⚠️",
+  VSCodeOpenRequested:       "📂",
+  VSCodeOpenSucceeded:       "🖥️",
+  VSCodeOpenFailed:          "⚠️",
+  EvolutionRelationsDetected: "🔗",
+  EvolutionMemoryUpdated:     "🧠",
+  RefactorDetected:           "🔧",
+  RefactorAccepted:           "✅",
+  RefactorRejected:           "⏭",
+  RefactorExecutionStarted:   "▶",
+  RefactorFileUpdated:        "📝",
+  RefactorValidationPassed:   "✅",
+  RefactorRollbackStarted:    "↩️",
+  RefactorRollbackCompleted:  "↩️",
+  RefactorExecutionFailed:    "❌",
+  RefactorExecutionSucceeded: "✅",
+  SimulationStarted:          "🎮",
+  SimulationOperationGenerated: "⚙️",
+  SimulationStopped:          "⏹",
+  SimulationCompleted:        "🏁",
 };
 
 const artifactTypeLabel: Record<string, string> = {
@@ -119,7 +138,7 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
   const [loading, setLoading]     = useState(true);
   const [input, setInput]         = useState("");
   const [sending, setSending]     = useState(false);
-  const [activeTab, setActiveTab] = useState<"artifacts" | "activity" | "approvals" | "memory" | "scaffold" | "changes" | "structure" | "preview" | "archivos" | "calidad" | "deploy">("artifacts");
+  const [activeTab, setActiveTab] = useState<"artifacts" | "activity" | "approvals" | "memory" | "scaffold" | "changes" | "structure" | "preview" | "archivos" | "calidad" | "deploy" | "evolution" | "refactor" | "simulacion">("artifacts");
   const [resolvingId, setResolvingId]     = useState<string | null>(null);
   const [previewActioning, setPreviewActioning] = useState(false);
   const [prevActivityCount, setPrevActivityCount] = useState(0);
@@ -457,6 +476,18 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
                   product.deployStatus === "failed"    ? "badge-danger"   :
                   ["preparing","building","deploying"].includes(product.deployStatus) ? "badge-warn" : "badge-muted"
                 } />
+              <TabBtn active={activeTab === "refactor"} onClick={() => setActiveTab("refactor")}
+                icon={<Wrench size={13} />} label="Refactor"
+                count={product.refactorRecommendations?.filter(r => r.status === "pending").length ?? 0}
+                countClass={
+                  (product.refactorRecommendations?.some(r => r.status === "pending" && r.severity === "high")) ? "badge-danger" :
+                  (product.refactorRecommendations?.some(r => r.status === "pending" && r.severity === "medium")) ? "badge-warn" : "badge-muted"
+                } />
+              <TabBtn active={activeTab === "evolution"} onClick={() => setActiveTab("evolution")}
+                icon={<Brain size={13} />} label="Evolución" count={0} />
+              <TabBtn active={activeTab === "simulacion"} onClick={() => setActiveTab("simulacion")}
+                icon={<Cpu size={13} />} label="Simulación" count={0}
+                countClass="badge-muted" />
               <TabBtn active={activeTab === "memory"} onClick={() => setActiveTab("memory")}
                 icon={<Database size={13} />} label="Memoria" count={0} />
             </div>
@@ -494,6 +525,9 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
               {activeTab === "archivos"   && <FilesPanel product={product} />}
               {activeTab === "calidad"    && <QualityPanel product={product} />}
               {activeTab === "deploy"     && <DeployPanel product={product} onRefresh={load} />}
+              {activeTab === "refactor"   && <RefactorPanel productId={productId} onActivity={load} />}
+              {activeTab === "evolution"  && <EvolutionPanel productId={productId} />}
+              {activeTab === "simulacion" && <SimulationPanel productId={productId} onActivity={load} />}
               {activeTab === "memory"     && <MemoryPanel entries={product.memory} />}
             </div>
           </div>

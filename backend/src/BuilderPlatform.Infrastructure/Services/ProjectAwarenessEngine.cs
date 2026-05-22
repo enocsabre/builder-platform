@@ -286,13 +286,22 @@ public class ProjectAwarenessEngine(ILogger<ProjectAwarenessEngine> logger)
             Path.Combine(registryDir, "modules.json"),
             JsonSerializer.Serialize(modulesPayload, opts), new System.Text.UTF8Encoding(false), ct);
 
-        var navItems = modules.Select(m => new
+        // nav-items — use actual scanned route directories, not entity-name fallbacks
+        var feAppDir    = Path.Combine(projectPath, "frontend", "app");
+        var reservedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "/dashboard", "/login" };
+        var actualRoutes = ScanFrontendRoutes(feAppDir)
+            .Where(r => !reservedSet.Contains(r))
+            .ToList();
+
+        var navItems = actualRoutes.Select(r =>
         {
-            label = entityLabels.TryGetValue(m.EntityName ?? m.ModuleName, out var humanLabel)
-                        ? humanLabel
-                        : m.ModuleName,
-            href  = m.RoutePath,
-            icon  = "Grid",
+            var match = modules.FirstOrDefault(m =>
+                string.Equals(m.RoutePath, r, StringComparison.OrdinalIgnoreCase));
+            var label = match is not null &&
+                        entityLabels.TryGetValue(match.EntityName ?? match.ModuleName, out var hl)
+                            ? hl
+                            : PrettifyRoute(r);
+            return new { label, href = r, icon = "Grid" };
         });
         await File.WriteAllTextAsync(
             Path.Combine(registryDir, "nav-items.json"),
@@ -336,6 +345,10 @@ public class ProjectAwarenessEngine(ILogger<ProjectAwarenessEngine> logger)
     }
 
     // ── Static helpers (mirror ScaffoldEngine naming logic) ───────────────────
+
+    private static string PrettifyRoute(string route) =>
+        string.Join(" ", route.TrimStart('/').Split('-')
+            .Select(w => w.Length > 0 ? char.ToUpperInvariant(w[0]) + w[1..] : ""));
 
     internal static string NormalizeForPath(string s) =>
         s.Replace("á", "a").Replace("é", "e").Replace("í", "i").Replace("ó", "o").Replace("ú", "u")

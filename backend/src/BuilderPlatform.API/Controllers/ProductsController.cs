@@ -2,8 +2,10 @@ using BuilderPlatform.API.DTOs;
 using BuilderPlatform.Domain.Entities;
 using BuilderPlatform.Infrastructure.Persistence;
 using BuilderPlatform.Infrastructure.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 using System.Text;
 using System.Threading.Channels;
 
@@ -11,19 +13,35 @@ namespace BuilderPlatform.API.Controllers;
 
 [ApiController]
 [Route("api/products")]
+[Authorize]
 public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrator, PreviewRunner previewRunner, RuntimeEventBus eventBus) : ControllerBase
 {
+    // ── Ownership helpers ─────────────────────────────────────────────────────
+
+    private Guid CurrentUserId =>
+        Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+    private async Task<Product?> FindOwned(Guid id) =>
+        await db.Products.FirstOrDefaultAsync(p => p.Id == id && p.OwnerUserId == CurrentUserId);
+
+    private async Task<bool> OwnsProduct(Guid id) =>
+        await db.Products.AnyAsync(p => p.Id == id && p.OwnerUserId == CurrentUserId);
+
     // GET /api/products
     [HttpGet]
     public async Task<IEnumerable<ProductSummaryDto>> GetAll()
     {
+        var uid = CurrentUserId;
         return await db.Products
+            .Where(p => p.OwnerUserId == uid)
             .OrderByDescending(p => p.UpdatedAt)
             .Select(p => new ProductSummaryDto(
                 p.Id, p.Name, p.Status.ToString(), p.PreviewUrl, p.PreviewStatus, p.PreviewPort,
                 p.IsProcessing, p.RuntimePhase, p.ProjectPath, p.ScaffoldStatus, p.RuntimeHealth,
                 p.CreatedAt, p.UpdatedAt,
-                p.DeployStatus, p.DeployUrl, p.DeployedAt))
+                p.DeployStatus, p.DeployUrl, p.DeployedAt,
+                p.Memory.Where(m => m.Key == "industry").OrderByDescending(m => m.CreatedAt).Select(m => m.Value).FirstOrDefault()
+            ))
             .ToListAsync();
     }
 
@@ -43,8 +61,9 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
             .Include(p => p.FileRevisions.OrderByDescending(r => r.CreatedAt))
             .Include(p => p.ValidationRuns.OrderByDescending(r => r.StartedAt))
             .Include(p => p.DeployRuns.OrderByDescending(r => r.StartedAt))
+            .Include(p => p.RefactorRecommendations.OrderByDescending(r => r.CreatedAt))
             .AsSplitQuery()
-            .FirstOrDefaultAsync(p => p.Id == id);
+            .FirstOrDefaultAsync(p => p.Id == id && p.OwnerUserId == CurrentUserId);
 
         if (p is null) return NotFound();
 
@@ -65,6 +84,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
             Status       = ProductStatus.Draft,
             IsProcessing = false,
             RuntimePhase = "queued",
+            OwnerUserId  = CurrentUserId,
         };
 
         // First user message stored in chat history
@@ -88,7 +108,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
             product.PreviewStatus, product.PreviewPort,
             product.IsProcessing, product.RuntimePhase, product.ProjectPath, product.ScaffoldStatus,
             product.RuntimeHealth, product.CreatedAt, product.UpdatedAt,
-            product.DeployStatus, product.DeployUrl, product.DeployedAt);
+            product.DeployStatus, product.DeployUrl, product.DeployedAt, null);
 
         return CreatedAtAction(nameof(GetById), new { id = product.Id }, dto);
     }
@@ -97,7 +117,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpPatch("{id:guid}/status")]
     public async Task<ActionResult<ProductSummaryDto>> UpdateStatus(Guid id, UpdateProductStatusRequest req)
     {
-        var product = await db.Products.FindAsync(id);
+        var product = await FindOwned(id);
         if (product is null) return NotFound();
 
         if (!Enum.TryParse<ProductStatus>(req.Status, true, out var newStatus))
@@ -122,7 +142,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpPatch("{id:guid}/preview-url")]
     public async Task<ActionResult<ProductSummaryDto>> UpdatePreviewUrl(Guid id, UpdatePreviewUrlRequest req)
     {
-        var product = await db.Products.FindAsync(id);
+        var product = await FindOwned(id);
         if (product is null) return NotFound();
 
         product.PreviewUrl = req.PreviewUrl;
@@ -136,7 +156,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id)
     {
-        var product = await db.Products.FindAsync(id);
+        var product = await FindOwned(id);
         if (product is null) return NotFound();
 
         db.Products.Remove(product);
@@ -148,7 +168,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpPost("{id:guid}/messages")]
     public async Task<ActionResult<MessageDto>> SendMessage(Guid id, SendMessageRequest req)
     {
-        var product = await db.Products.FindAsync(id);
+        var product = await FindOwned(id);
         if (product is null) return NotFound();
 
         if (string.IsNullOrWhiteSpace(req.Content))
@@ -188,6 +208,8 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpPost("{id:guid}/approvals/{approvalId:guid}/resolve")]
     public async Task<ActionResult<ApprovalDto>> ResolveApproval(Guid id, Guid approvalId, ResolveApprovalRequest req)
     {
+        if (!await OwnsProduct(id)) return NotFound();
+
         var approval = await db.Approvals.FirstOrDefaultAsync(a => a.Id == approvalId && a.ProductId == id);
         if (approval is null) return NotFound();
 
@@ -224,7 +246,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpPost("{id:guid}/preview/start")]
     public async Task<IActionResult> StartPreview(Guid id)
     {
-        var product = await db.Products.FindAsync(id);
+        var product = await FindOwned(id);
         if (product is null) return NotFound();
 
         if (string.IsNullOrEmpty(product.ProjectPath) || product.ScaffoldStatus != "complete")
@@ -241,7 +263,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpPost("{id:guid}/preview/stop")]
     public async Task<IActionResult> StopPreview(Guid id)
     {
-        var product = await db.Products.FindAsync(id);
+        var product = await FindOwned(id);
         if (product is null) return NotFound();
 
         await previewRunner.StopAsync(id);
@@ -252,7 +274,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpPost("{id:guid}/open-vscode")]
     public async Task<IActionResult> OpenInVSCode(Guid id, [FromServices] IConfiguration config)
     {
-        var product = await db.Products.FindAsync(id);
+        var product = await FindOwned(id);
         if (product is null) return NotFound();
 
         if (string.IsNullOrWhiteSpace(product.ProjectPath))
@@ -358,7 +380,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     {
         var product = await db.Products
             .Include(p => p.FileRevisions)
-            .FirstOrDefaultAsync(p => p.Id == id);
+            .FirstOrDefaultAsync(p => p.Id == id && p.OwnerUserId == CurrentUserId);
 
         if (product is null) return NotFound();
         if (string.IsNullOrWhiteSpace(product.ProjectPath))
@@ -374,6 +396,8 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpGet("{id:guid}/revisions/{revisionId:guid}")]
     public async Task<ActionResult> GetRevision(Guid id, Guid revisionId)
     {
+        if (!await OwnsProduct(id)) return NotFound();
+
         var revision = await db.FileRevisions
             .FirstOrDefaultAsync(r => r.Id == revisionId && r.ProductId == id);
 
@@ -395,7 +419,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpPost("{id:guid}/validate")]
     public async Task<IActionResult> TriggerValidation(Guid id)
     {
-        var product = await db.Products.FindAsync(id);
+        var product = await FindOwned(id);
         if (product is null) return NotFound();
 
         if (string.IsNullOrEmpty(product.ProjectPath) || product.ScaffoldStatus != "complete")
@@ -409,6 +433,8 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpGet("{id:guid}/validations")]
     public async Task<ActionResult<IEnumerable<ValidationRunSummaryDto>>> GetValidations(Guid id)
     {
+        if (!await OwnsProduct(id)) return NotFound();
+
         var runs = await db.ValidationRuns
             .Where(r => r.ProductId == id)
             .OrderByDescending(r => r.StartedAt)
@@ -424,6 +450,8 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpGet("{id:guid}/validations/{runId:guid}")]
     public async Task<ActionResult<ValidationRunDetailDto>> GetValidationRun(Guid id, Guid runId)
     {
+        if (!await OwnsProduct(id)) return NotFound();
+
         var run = await db.ValidationRuns
             .FirstOrDefaultAsync(r => r.Id == runId && r.ProductId == id);
 
@@ -440,7 +468,7 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpPost("{id:guid}/deploy")]
     public async Task<IActionResult> TriggerDeploy(Guid id)
     {
-        var product = await db.Products.FindAsync(id);
+        var product = await FindOwned(id);
         if (product is null) return NotFound();
 
         if (product.ScaffoldStatus != "complete" || string.IsNullOrWhiteSpace(product.ProjectPath))
@@ -460,6 +488,8 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpGet("{id:guid}/deployments")]
     public async Task<ActionResult<IEnumerable<DeployRunSummaryDto>>> GetDeployments(Guid id)
     {
+        if (!await OwnsProduct(id)) return NotFound();
+
         var runs = await db.DeployRuns
             .Where(r => r.ProductId == id)
             .OrderByDescending(r => r.StartedAt)
@@ -475,6 +505,8 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
     [HttpGet("{id:guid}/deployments/{runId:guid}")]
     public async Task<ActionResult<DeployRunDetailDto>> GetDeploymentRun(Guid id, Guid runId)
     {
+        if (!await OwnsProduct(id)) return NotFound();
+
         var run = await db.DeployRuns
             .FirstOrDefaultAsync(r => r.Id == runId && r.ProductId == id);
 
@@ -487,8 +519,355 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
             run.Logs, run.Errors, run.DeployUrl, run.CommitHash, run.Branch, gates));
     }
 
-    // GET /api/products/{id}/events  — SSE stream for real-time updates
+    // GET /api/products/{id}/refactor
+    [HttpGet("{id:guid}/refactor")]
+    public async Task<ActionResult<IEnumerable<RefactorRecommendationDto>>> GetRefactorRecommendations(Guid id)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+        var recs = await db.RefactorRecommendations
+            .Where(r => r.ProductId == id)
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync();
+        return Ok(recs.Select(r => new RefactorRecommendationDto(
+            r.Id, r.Type, r.Title, r.Severity, r.Reason, r.Impact, r.Risk,
+            r.Status, r.Note, r.ArtifactId, r.CreatedAt, r.ResolvedAt,
+            r.ExecutedAt, r.ExecutionError)));
+    }
+
+    // POST /api/products/{id}/refactor/{recId}/resolve
+    [HttpPost("{id:guid}/refactor/{recId:guid}/resolve")]
+    public async Task<ActionResult<RefactorRecommendationDto>> ResolveRefactor(
+        Guid id, Guid recId, ResolveRefactorRequest req,
+        [FromServices] ProductEvolutionService evolutionService)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+
+        var rec = await db.RefactorRecommendations
+            .FirstOrDefaultAsync(r => r.Id == recId && r.ProductId == id);
+        if (rec is null) return NotFound();
+        if (rec.Status != "pending") return BadRequest(new { error = "Recommendation already resolved" });
+
+        rec.Status     = req.Accepted ? "accepted" : "rejected";
+        rec.Note       = req.Note;
+        rec.ResolvedAt = DateTime.UtcNow;
+
+        var product = await db.Products.FindAsync(id);
+        if (product is not null) product.UpdatedAt = DateTime.UtcNow;
+
+        if (req.Accepted && product is not null)
+        {
+            // Create Refactor Plan artifact
+            var plan = BuildRefactorPlanContent(rec, product.Name);
+            var artifact = new Artifact
+            {
+                ProductId   = id,
+                Type        = "refactor_plan",
+                Title       = $"Refactor Plan: {rec.Title}",
+                Content     = plan,
+                Version     = 1,
+                Status      = ArtifactStatus.Draft,
+            };
+            db.Artifacts.Add(artifact);
+            rec.ArtifactId = artifact.Id;
+
+            db.ActivityEvents.Add(new ActivityEvent
+            {
+                ProductId = id,
+                EventType = ActivityType.RefactorAccepted,
+                Title     = $"Refactor aceptado: {rec.Title}",
+                Details   = $"Plan generado — tipo: {rec.Type} · severidad: {rec.Severity}",
+                ArtifactId = artifact.Id,
+            });
+
+            // Record architectural decision in evolution memory
+            var ctx = await evolutionService.GetEvolutionContextAsync(id, db);
+            ctx.Decisions.Add(new EvolutionDecision(
+                $"Refactor aceptado: {rec.Title} (tipo: {rec.Type})",
+                DateTime.UtcNow));
+            evolutionService.PersistEvolutionContext(id, ctx, db);
+        }
+        else
+        {
+            db.ActivityEvents.Add(new ActivityEvent
+            {
+                ProductId = id,
+                EventType = ActivityType.RefactorRejected,
+                Title     = $"Refactor rechazado: {rec.Title}",
+                Details   = req.Note,
+            });
+        }
+
+        await db.SaveChangesAsync();
+        return Ok(new RefactorRecommendationDto(
+            rec.Id, rec.Type, rec.Title, rec.Severity, rec.Reason, rec.Impact, rec.Risk,
+            rec.Status, rec.Note, rec.ArtifactId, rec.CreatedAt, rec.ResolvedAt,
+            rec.ExecutedAt, rec.ExecutionError));
+    }
+
+    // POST /api/products/{id}/refactor/{recId}/execute
+    [HttpPost("{id:guid}/refactor/{recId:guid}/execute")]
+    public async Task<ActionResult<RefactorRecommendationDto>> ExecuteRefactor(
+        Guid id, Guid recId,
+        [FromServices] RefactorExecutionService executionService,
+        [FromServices] ProductEvolutionService  evolutionService,
+        [FromServices] RuntimeEventBus          bus)
+    {
+        var product = await db.Products
+            .FirstOrDefaultAsync(p => p.Id == id && p.OwnerUserId == CurrentUserId);
+        if (product is null) return NotFound();
+
+        var rec = await db.RefactorRecommendations
+            .FirstOrDefaultAsync(r => r.Id == recId && r.ProductId == id);
+        if (rec is null) return NotFound();
+        if (rec.Status != "accepted")
+            return BadRequest(new { error = "Solo se pueden ejecutar recomendaciones en estado 'accepted'." });
+        if (!executionService.CanExecuteSafely(rec.Type))
+            return UnprocessableEntity(new { error = $"El refactor '{rec.Type}' no puede ejecutarse automáticamente. Consulta el Refactor Plan artifact." });
+        if (string.IsNullOrWhiteSpace(product.ProjectPath))
+            return UnprocessableEntity(new { error = "El producto no tiene proyecto scaffolded." });
+
+        // ── Log start ────────────────────────────────────────────────────────
+        db.ActivityEvents.Add(new ActivityEvent
+        {
+            ProductId = id,
+            EventType = ActivityType.RefactorExecutionStarted,
+            Title     = $"Aplicando refactor: {rec.Title}",
+            Details   = $"tipo: {rec.Type} · severidad: {rec.Severity}",
+        });
+
+        // ── Execute file changes ─────────────────────────────────────────────
+        var result = await executionService.ExecuteFileChangesAsync(product.ProjectPath, rec);
+
+        if (!result.Success)
+        {
+            rec.Status         = "failed";
+            rec.ExecutionError = result.Error;
+            product.UpdatedAt  = DateTime.UtcNow;
+            db.ActivityEvents.Add(new ActivityEvent
+            {
+                ProductId = id,
+                EventType = ActivityType.RefactorExecutionFailed,
+                Title     = $"Refactor fallido: {rec.Title}",
+                Details   = result.Error,
+            });
+            await db.SaveChangesAsync();
+            await bus.PingAsync(id);
+            return UnprocessableEntity(new { error = result.Error });
+        }
+
+        // ── Validate registries ──────────────────────────────────────────────
+        var validationOk = await executionService.ValidateRegistriesAsync(product.ProjectPath);
+        if (!validationOk)
+        {
+            db.ActivityEvents.Add(new ActivityEvent
+            {
+                ProductId = id,
+                EventType = ActivityType.RefactorRollbackStarted,
+                Title     = $"Rollback iniciado: {rec.Title}",
+                Details   = "Registry inválido post-refactor",
+            });
+            await executionService.RollbackAsync(result.Backups);
+            db.ActivityEvents.Add(new ActivityEvent
+            {
+                ProductId = id,
+                EventType = ActivityType.RefactorRollbackCompleted,
+                Title     = $"Rollback completado: {rec.Title}",
+                Details   = "Archivos restaurados al estado anterior",
+            });
+            rec.Status         = "failed";
+            rec.ExecutionError = "Validación fallida post-refactor. Cambios revertidos automáticamente.";
+            product.UpdatedAt  = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            await bus.PingAsync(id);
+            return UnprocessableEntity(new { error = rec.ExecutionError });
+        }
+
+        // ── Success — persist FileRevisions + evolution memory ───────────────
+        foreach (var b in result.Backups)
+        {
+            db.FileRevisions.Add(new FileRevision
+            {
+                ProductId     = id,
+                RelativePath  = b.RelPath,
+                PatchType     = $"refactor_execution:{rec.Type}",
+                Reason        = $"Refactor aplicado: {rec.Title}",
+                BeforeContent = b.Before.Length <= 8000 ? b.Before : b.Before[..8000],
+                AfterContent  = b.After.Length  <= 8000 ? b.After  : b.After[..8000],
+            });
+            db.ActivityEvents.Add(new ActivityEvent
+            {
+                ProductId = id,
+                EventType = ActivityType.RefactorFileUpdated,
+                Title     = $"Archivo actualizado: {b.RelPath}",
+                Details   = $"Refactor: {rec.Title}",
+            });
+        }
+
+        // Update evolution memory based on refactor type
+        var ctx = await evolutionService.GetEvolutionContextAsync(id, db);
+        ApplyEvolutionMemoryUpdate(rec, ctx);
+        evolutionService.PersistEvolutionContext(id, ctx, db);
+
+        // Mark recommendation as applied
+        rec.Status     = "applied";
+        rec.ExecutedAt = DateTime.UtcNow;
+        product.UpdatedAt = DateTime.UtcNow;
+
+        db.ActivityEvents.Add(new ActivityEvent
+        {
+            ProductId = id,
+            EventType = ActivityType.RefactorValidationPassed,
+            Title     = "Validación post-refactor: OK",
+            Details   = $"Registry válido — {result.Backups.Count} archivo(s) actualizado(s)",
+        });
+        db.ActivityEvents.Add(new ActivityEvent
+        {
+            ProductId  = id,
+            EventType  = ActivityType.RefactorExecutionSucceeded,
+            Title      = $"Refactor aplicado: {rec.Title}",
+            Details    = result.Backups.Count > 0
+                ? $"Archivos: {string.Join(", ", result.Backups.Select(b => b.RelPath))}"
+                : "Actualización de evolution memory — sin cambios en archivos.",
+            ArtifactId = rec.ArtifactId,
+        });
+
+        await db.SaveChangesAsync();
+        await bus.PingAsync(id);
+
+        return Ok(new RefactorRecommendationDto(
+            rec.Id, rec.Type, rec.Title, rec.Severity, rec.Reason, rec.Impact, rec.Risk,
+            rec.Status, rec.Note, rec.ArtifactId, rec.CreatedAt, rec.ResolvedAt,
+            rec.ExecutedAt, rec.ExecutionError));
+    }
+
+    // Applies in-memory evolution context changes based on the refactor type.
+    private static void ApplyEvolutionMemoryUpdate(
+        Domain.Entities.RefactorRecommendation rec, EvolutionContext ctx)
+    {
+        switch (rec.Type)
+        {
+            case "redundant_name":
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(rec.Title, @"Renombrar '(.+?)' a '(.+?)'");
+                if (!m.Success) return;
+                var (from, to) = (m.Groups[1].Value, m.Groups[2].Value);
+                var mod = ctx.Modules.FirstOrDefault(x =>
+                    string.Equals(x.Name, from, StringComparison.OrdinalIgnoreCase));
+                if (mod != null)
+                    ctx.Modules[ctx.Modules.IndexOf(mod)] = mod with { Name = to };
+                ctx.Decisions.Add(new EvolutionDecision(
+                    $"Módulo '{from}' renombrado a '{to}' vía refactor execution (Sprint 27)",
+                    DateTime.UtcNow));
+                break;
+            }
+            case "duplicate_module":
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(rec.Title, @"Consolidar '(.+?)' y '(.+?)'");
+                if (!m.Success) return;
+                ctx.Decisions.Add(new EvolutionDecision(
+                    $"Módulo '{m.Groups[1].Value}' marcado para fusión con '{m.Groups[2].Value}' — etiqueta nav actualizada",
+                    DateTime.UtcNow));
+                break;
+            }
+            case "orphaned_history":
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(rec.Title, @"Eliminar '(.+?)' del historial");
+                if (m.Success)
+                {
+                    ctx.FeatureHistory.RemoveAll(h =>
+                        string.Equals(h, m.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
+                    ctx.Decisions.Add(new EvolutionDecision(
+                        $"'{m.Groups[1].Value}' eliminado del historial — sin módulo activo correspondiente",
+                        DateTime.UtcNow));
+                }
+                break;
+            }
+            case "missing_connection":
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(rec.Title, @"Conectar '(.+?)' con '(.+?)'");
+                if (m.Success)
+                {
+                    ctx.Relations.Add(new EvolutionRelation(
+                        m.Groups[1].Value, m.Groups[2].Value,
+                        "conectado_manualmente",
+                        "Conexión añadida manualmente vía refactor execution",
+                        DateTime.UtcNow));
+                    ctx.Decisions.Add(new EvolutionDecision(
+                        $"Conexión añadida: '{m.Groups[1].Value}' → '{m.Groups[2].Value}'",
+                        DateTime.UtcNow));
+                }
+                break;
+            }
+            case "contradictory_relation":
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(rec.Title, @"'(.+?)'.+?'(.+?)'");
+                if (m.Success)
+                {
+                    var (a, b) = (m.Groups[1].Value, m.Groups[2].Value);
+                    var toRemove = ctx.Relations.FirstOrDefault(r =>
+                        string.Equals(r.From, b, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(r.To,   a, StringComparison.OrdinalIgnoreCase));
+                    if (toRemove != null) ctx.Relations.Remove(toRemove);
+                    ctx.Decisions.Add(new EvolutionDecision(
+                        $"Relación contradictoria resuelta entre '{a}' y '{b}'",
+                        DateTime.UtcNow));
+                }
+                break;
+            }
+        }
+    }
+
+    private static string BuildRefactorPlanContent(
+        Domain.Entities.RefactorRecommendation rec, string productName) =>
+        $"""
+        # Refactor Plan: {rec.Title}
+
+        **Producto**: {productName}
+        **Tipo**: {rec.Type}
+        **Severidad**: {rec.Severity}
+        **Fecha**: {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC
+
+        ## Por qué
+
+        {rec.Reason}
+
+        ## Impacto esperado
+
+        {rec.Impact}
+
+        ## Nivel de riesgo
+
+        {rec.Risk}
+
+        ## Pasos sugeridos
+
+        1. Revisar los módulos involucrados en el workspace.
+        2. Aplicar el cambio en el sprint siguiente (sin destruir lo existente).
+        3. Actualizar el registry y la evolution memory tras el cambio.
+        4. Re-validar con quality gates antes del próximo deploy.
+
+        ---
+        *Generado automáticamente por el Architectural Refactoring Intelligence Engine — Builder Platform Sprint 26.*
+        """;
+
+    // GET /api/products/{id}/evolution
+    [HttpGet("{id:guid}/evolution")]
+    public async Task<ActionResult<EvolutionContextDto>> GetEvolution(
+        Guid id, [FromServices] ProductEvolutionService evolutionService)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+        var ctx = await evolutionService.GetEvolutionContextAsync(id, db);
+        return Ok(new EvolutionContextDto(
+            ctx.Modules.Select(m => new EvolutionModuleDto(m.Name, m.Route, m.Layer, m.AddedAt)).ToList(),
+            ctx.Relations.Select(r => new EvolutionRelationDto(r.From, r.To, r.RelationType, r.Reason, r.DetectedAt)).ToList(),
+            ctx.Decisions.Select(d => new EvolutionDecisionDto(d.Summary, d.MadeAt)).ToList(),
+            ctx.FeatureHistory
+        ));
+    }
+
+    // GET /api/products/{id}/events  — SSE stream (anonymous: EventSource can't send headers)
     [HttpGet("{id:guid}/events")]
+    [AllowAnonymous]
     public async Task StreamEvents(Guid id, CancellationToken ct)
     {
         var exists = await db.Products.AnyAsync(p => p.Id == id, ct);
@@ -544,12 +923,109 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
         await Response.Body.WriteAsync(bytes, ct);
     }
 
+    // ── Simulation endpoints ───────────────────────────────────────────────────
+
+    [HttpPost("{id:guid}/simulate/start")]
+    public async Task<ActionResult<SimulationStatusDto>> SimulationStart(
+        Guid id,
+        [FromBody] StartSimulationRequest req,
+        [FromServices] SimulationEngine sim)
+    {
+        var p = await FindOwned(id);
+        if (p is null) return NotFound();
+        if (string.IsNullOrWhiteSpace(p.ProjectPath)) return UnprocessableEntity("Producto sin projectPath.");
+
+        var validScenarios = new[] { "hora_pico", "cocina_congestionada", "bajo_inventario", "operacion_normal" };
+        var scenario = req.Scenario?.Trim().ToLowerInvariant() ?? "operacion_normal";
+        if (!validScenarios.Contains(scenario))
+            return UnprocessableEntity($"Escenario inválido: {scenario}");
+
+        if (sim.IsRunning(id)) return UnprocessableEntity("Ya hay una simulación activa para este producto.");
+
+        // Persist SimulationRun
+        var run = new SimulationRun { ProductId = id, Scenario = scenario };
+        db.SimulationRuns.Add(run);
+
+        db.ActivityEvents.Add(new ActivityEvent
+        {
+            ProductId = id,
+            EventType = ActivityType.SimulationStarted,
+            Title     = $"Simulación iniciada — escenario: {scenario}",
+            Details   = $"Escenario: {scenario}",
+        });
+
+        await db.SaveChangesAsync();
+
+        sim.Start(id, run.Id, p.ProjectPath, scenario);
+        await eventBus.PingAsync(id);
+
+        return Ok(new SimulationStatusDto(true, scenario, 0, run.Id, run.StartedAt));
+    }
+
+    [HttpPost("{id:guid}/simulate/stop")]
+    public async Task<ActionResult<SimulationStatusDto>> SimulationStop(
+        Guid id,
+        [FromServices] SimulationEngine sim)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+
+        if (!sim.IsRunning(id)) return UnprocessableEntity("No hay simulación activa.");
+
+        var opsGenerated = sim.Stop(id);
+
+        // Update the latest running SimulationRun
+        var run = await db.SimulationRuns
+            .Where(r => r.ProductId == id && r.Status == "running")
+            .OrderByDescending(r => r.StartedAt)
+            .FirstOrDefaultAsync();
+
+        if (run is not null)
+        {
+            run.Status       = "stopped";
+            run.OpsGenerated = opsGenerated;
+            run.StoppedAt    = DateTime.UtcNow;
+        }
+
+        db.ActivityEvents.Add(new ActivityEvent
+        {
+            ProductId = id,
+            EventType = ActivityType.SimulationStopped,
+            Title     = $"Simulación detenida — {opsGenerated} operaciones generadas",
+            Details   = $"Ops: {opsGenerated}",
+        });
+
+        await db.SaveChangesAsync();
+        await eventBus.PingAsync(id);
+
+        return Ok(new SimulationStatusDto(false, run?.Scenario, opsGenerated, run?.Id, run?.StartedAt));
+    }
+
+    [HttpGet("{id:guid}/simulate/status")]
+    public async Task<ActionResult<SimulationStatusDto>> SimulationStatus(
+        Guid id,
+        [FromServices] SimulationEngine sim)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+
+        var status = sim.GetStatus(id);
+        if (status is null)
+        {
+            var lastRun = await db.SimulationRuns
+                .Where(r => r.ProductId == id)
+                .OrderByDescending(r => r.StartedAt)
+                .FirstOrDefaultAsync();
+            return Ok(new SimulationStatusDto(false, lastRun?.Scenario, lastRun?.OpsGenerated ?? 0, lastRun?.Id, lastRun?.StartedAt));
+        }
+
+        return Ok(new SimulationStatusDto(true, status.Value.scenario, status.Value.opsGenerated, null, null));
+    }
+
     // ── Mapping helpers ────────────────────────────────────────────────────────
 
     private static ProductSummaryDto ToSummaryDto(Product p) =>
         new(p.Id, p.Name, p.Status.ToString(), p.PreviewUrl, p.PreviewStatus, p.PreviewPort,
             p.IsProcessing, p.RuntimePhase, p.ProjectPath, p.ScaffoldStatus, p.RuntimeHealth,
-            p.CreatedAt, p.UpdatedAt, p.DeployStatus, p.DeployUrl, p.DeployedAt);
+            p.CreatedAt, p.UpdatedAt, p.DeployStatus, p.DeployUrl, p.DeployedAt, null);
 
     private static ProductDetailDto ToDetailDto(Product p) =>
         new(
@@ -582,6 +1058,8 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
             p.DeployStatus, p.DeployUrl, p.DeployedAt, p.DeployCommitHash, p.DeployBranch,
             p.DeployRuns
                 .OrderByDescending(r => r.StartedAt).Take(5)
-                .Select(r => new DeployRunSummaryDto(r.Id, r.Status, r.StartedAt, r.FinishedAt, r.DeployUrl, r.CommitHash, r.Branch))
+                .Select(r => new DeployRunSummaryDto(r.Id, r.Status, r.StartedAt, r.FinishedAt, r.DeployUrl, r.CommitHash, r.Branch)),
+            p.RefactorRecommendations
+                .Select(r => new RefactorRecommendationDto(r.Id, r.Type, r.Title, r.Severity, r.Reason, r.Impact, r.Risk, r.Status, r.Note, r.ArtifactId, r.CreatedAt, r.ResolvedAt, r.ExecutedAt, r.ExecutionError))
         );
 }

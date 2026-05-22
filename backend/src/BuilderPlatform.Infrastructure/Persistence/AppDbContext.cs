@@ -17,6 +17,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<FileRevision>   FileRevisions    => Set<FileRevision>();
     public DbSet<ValidationRun>  ValidationRuns   => Set<ValidationRun>();
     public DbSet<DeployRun>      DeployRuns       => Set<DeployRun>();
+    public DbSet<BuilderUser>              BuilderUsers             => Set<BuilderUser>();
+    public DbSet<RefactorRecommendation>   RefactorRecommendations  => Set<RefactorRecommendation>();
+    public DbSet<SimulationRun>            SimulationRuns           => Set<SimulationRun>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -38,6 +41,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(p => p.DeployLogs).HasMaxLength(3000);
             e.Property(p => p.DeployCommitHash).HasMaxLength(60);
             e.Property(p => p.DeployBranch).HasMaxLength(100);
+            e.Property(p => p.OwnerUserId).IsRequired(false);
             e.HasMany(p => p.Messages).WithOne(m => m.Product).HasForeignKey(m => m.ProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(p => p.ActivityEvents).WithOne(a => a.Product).HasForeignKey(a => a.ProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(p => p.Approvals).WithOne(a => a.Product).HasForeignKey(a => a.ProductId).OnDelete(DeleteBehavior.Cascade);
@@ -151,5 +155,46 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(r => r.Product).WithMany(p => p.DeployRuns).HasForeignKey(r => r.ProductId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(r => r.ProductId);
         });
+
+        modelBuilder.Entity<BuilderUser>(e =>
+        {
+            e.HasKey(u => u.Id);
+            e.Property(u => u.Email).IsRequired().HasMaxLength(200);
+            e.Property(u => u.PasswordHash).IsRequired();
+            e.Property(u => u.Name).HasMaxLength(100);
+            e.HasIndex(u => u.Email).IsUnique();
+        });
+
+        modelBuilder.Entity<RefactorRecommendation>(e =>
+        {
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Type).IsRequired().HasMaxLength(50);
+            e.Property(r => r.Title).IsRequired().HasMaxLength(300);
+            e.Property(r => r.Severity).IsRequired().HasMaxLength(10).HasDefaultValue("medium");
+            e.Property(r => r.Reason).IsRequired().HasMaxLength(600);
+            e.Property(r => r.Impact).IsRequired().HasMaxLength(400);
+            e.Property(r => r.Risk).IsRequired().HasMaxLength(400);
+            e.Property(r => r.Status).IsRequired().HasMaxLength(20).HasDefaultValue("pending");
+            e.Property(r => r.Note).HasMaxLength(500);
+            e.Property(r => r.ExecutionError).HasMaxLength(400);
+            e.HasOne(r => r.Product).WithMany(p => p.RefactorRecommendations).HasForeignKey(r => r.ProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(r => r.ProductId);
+        });
+
+        // Extend Product entity to include RefactorRecommendations relation
+        modelBuilder.Entity<Product>(e =>
+            e.HasMany(p => p.RefactorRecommendations).WithOne(r => r.Product).HasForeignKey(r => r.ProductId).OnDelete(DeleteBehavior.Cascade));
+
+        modelBuilder.Entity<SimulationRun>(e =>
+        {
+            e.HasKey(s => s.Id);
+            e.Property(s => s.Status).IsRequired().HasMaxLength(20).HasDefaultValue("running");
+            e.Property(s => s.Scenario).IsRequired().HasMaxLength(50).HasDefaultValue("operacion_normal");
+            e.HasOne(s => s.Product).WithMany(p => p.SimulationRuns).HasForeignKey(s => s.ProductId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(s => s.ProductId);
+        });
+
+        modelBuilder.Entity<Product>(e =>
+            e.HasMany(p => p.SimulationRuns).WithOne(s => s.Product).HasForeignKey(s => s.ProductId).OnDelete(DeleteBehavior.Cascade));
     }
 }

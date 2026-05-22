@@ -23,13 +23,15 @@ public record DomainContext(
 );
 
 public record ModuleRow(string[] Cells, string StatusColor);
+public record WorkflowTransition(string From, string To, string Label, string ActionColor);
 public record ModuleTemplate(
-    string      Title,
-    string      ActionLabel,
-    string      KpiBar,
-    string[]    Columns,
-    int         StatusColumnIndex,
-    ModuleRow[] Rows
+    string                Title,
+    string                ActionLabel,
+    string                KpiBar,
+    string[]              Columns,
+    int                   StatusColumnIndex,
+    ModuleRow[]           Rows,
+    WorkflowTransition[]? Transitions = null
 );
 
 public static class ContentGenerator
@@ -254,12 +256,22 @@ public static class ContentGenerator
     public static string GenerateRuntimeChatScaffoldComplete(string name, int fileCount, string projectPath) =>
         $"✓ Scaffold de **{name}** completado — **{fileCount} archivos** generados.\n\n" +
         $"**Lo que incluye este scaffold:**\n" +
-        $"→ Login funcional con credenciales demo (visibles en la pantalla de ingreso)\n" +
-        $"→ Sesión protegida con cookie — el dashboard requiere login\n" +
-        $"→ Cada módulo tiene botón **Nuevo**, modal de formulario y persistencia en `.data/`\n" +
+        $"→ Login con icono de app, badge DEMO y credenciales visibles en pantalla\n" +
+        $"→ Sesión protegida con cookie httpOnly — el dashboard requiere login\n" +
+        $"→ Módulos domain-aware con datos operacionales reales del dominio\n" +
+        $"→ Formularios con validación, campo requerido marcado y placeholder contextual\n" +
+        $"→ Toast de confirmación al crear registros (3 s auto-dismiss)\n" +
+        $"→ Empty state con ícono y CTA cuando no hay datos\n" +
+        $"→ Hover en filas de tabla y separador visual datos demo / datos reales\n" +
+        $"→ Sidebar con accent activo y hover states\n" +
         $"→ Los datos sobreviven refresh — no es fake data\n" +
-        $"→ Logout en la barra lateral\n\n" +
-        $"Iniciá el preview y probá: entrá con las credenciales demo, agregá registros, recargá la página.";
+        $"→ Botones de transición de estado en módulos operacionales (ej. Preparar → Completar)\n" +
+        $"→ Motor de workflow persistido: cada cambio de estado queda registrado\n" +
+        $"→ **Dashboard con KPIs en vivo** — calculados desde registros reales (ventas, órdenes activas, mesas ocupadas, stock bajo)\n" +
+        $"→ Badge \"DATOS EN VIVO\" y dot verde en cada card cuando hay datos reales\n" +
+        $"→ Auto-refresh cada 30 s + refresh al volver a la pestaña — el sistema siempre muestra estado actual\n" +
+        $"→ Última actividad con timestamp relativo en el header del dashboard\n\n" +
+        $"Flujo de prueba: login → creá una orden → cambiá su estado → observá cómo las métricas del dashboard cambian automáticamente.";
 
     public static string GenerateFeatureResponse(string feature, ProductProfile p) =>
         $"Módulo detectado: **{feature.Trim()}**.\n\n" +
@@ -686,6 +698,12 @@ public static class ContentGenerator
                     new(["#1245", "Mesa 3", "Arroz con Pollo x2",          "₡12,400", "14:02", "Entregado"],  "active"),
                     new(["#1244", "Mesa 1", "Sopa Negra x1, Refresco x1", "₡4,800",  "13:55", "Cerrado"],    "active"),
                     new(["#1243", "Mesa 2", "Plato del día x3",            "₡9,300",  "13:41", "Cerrado"],    "active"),
+                ],
+                Transitions:
+                [
+                    new("Pendiente",   "Preparando",  "Preparar",  "warn"),
+                    new("Preparando",  "En camino",   "Completar", "info"),
+                    new("En camino",   "Entregado",   "Entregar",  "active"),
                 ]);
 
         if (MT(f, r, "menu", "men"))
@@ -708,6 +726,12 @@ public static class ContentGenerator
                     new(["#1246", "Mesa 7", "Gallo Pinto x1",     "14 min", "Alta",    "En preparación"], "warn"),
                     new(["#1244", "Mesa 3", "Refresco x2",        "22 min", "Urgente", "Lista"],           "active"),
                     new(["#1249", "Mesa 9", "Ceviche x2",         "1 min",  "Normal",  "Recibida"],        "info"),
+                ],
+                Transitions:
+                [
+                    new("Recibida",       "En preparación", "Preparar",     "warn"),
+                    new("En preparación", "Lista",           "Marcar lista", "active"),
+                    new("Lista",          "Entregada",       "Entregar",     "active"),
                 ]);
 
         if (MT(f, r, "inventario"))
@@ -1213,5 +1237,62 @@ public static class ContentGenerator
                 ]);
 
         return null;
+    }
+
+    // ── Evolution-aware messages (Sprint 25) ──────────────────────────────────
+
+    /// <summary>
+    /// Completion message when a feature was generated AND relations were detected.
+    /// </summary>
+    public static string GenerateEvolutionBundleComplete(
+        string featureName, string productName,
+        List<EvolutionRelation> relations,
+        int codeFilesCreated, bool navAdded, bool widgetAdded)
+    {
+        if (relations.Count == 0)
+            return GenerateFeatureBundleComplete(featureName, productName, codeFilesCreated, navAdded, widgetAdded);
+
+        var connected = relations.Select(r => $"**{r.To}**").Distinct().ToList();
+        var connectionText = connected.Count == 1
+            ? connected[0]
+            : string.Join(", ", connected[..^1]) + " y " + connected[^1];
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Módulo **{featureName}** generado y conectado evolutivamente con {connectionText}.");
+        sb.AppendLine();
+
+        // Show at most 2 relation reasons
+        foreach (var rel in relations.Take(2))
+            sb.AppendLine($"— _{rel.Reason}_");
+        sb.AppendLine();
+
+        var parts = new List<string>();
+        if (codeFilesCreated > 0) parts.Add($"{codeFilesCreated} archivo(s) generados");
+        if (navAdded)              parts.Add("navegación actualizada");
+        if (widgetAdded)           parts.Add("widget en dashboard");
+
+        sb.Append(parts.Count > 0 ? string.Join(", ", parts) + ". " : "");
+        sb.Append("El producto mantiene coherencia arquitectónica — los flujos están conectados.");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Start message for feature execution when the runtime has evolution context.
+    /// </summary>
+    public static string GenerateEvolutionAwareStart(
+        string featureName, string productName, List<EvolutionRelation> relations)
+    {
+        if (relations.Count == 0)
+            return GenerateFeatureExecutionStart(featureName, productName);
+
+        var connected = relations.Select(r => $"**{r.To}**").Distinct().ToList();
+        var connectionText = connected.Count == 1
+            ? connected[0]
+            : string.Join(", ", connected[..^1]) + " y " + connected[^1];
+
+        return $"Analicé la arquitectura de **{productName}** y detecté que **{featureName}** " +
+               $"se conecta con módulos existentes: {connectionText}.\n\n" +
+               $"Generando el módulo con contexto evolutivo — los flujos serán coherentes con la arquitectura actual del producto.";
     }
 }

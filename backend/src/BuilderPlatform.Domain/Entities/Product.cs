@@ -19,6 +19,8 @@ public class Product
     public DateTime      CreatedAt      { get; set; } = DateTime.UtcNow;
     public DateTime      UpdatedAt      { get; set; } = DateTime.UtcNow;
 
+    public Guid? OwnerUserId { get; set; }
+
     public ICollection<ChatMessage>   Messages        { get; set; } = [];
     public ICollection<ActivityEvent> ActivityEvents  { get; set; } = [];
     public ICollection<Approval>      Approvals       { get; set; } = [];
@@ -39,7 +41,9 @@ public class Product
     public string?   DeployCommitHash        { get; set; }
     public string?   DeployBranch            { get; set; }
 
-    public ICollection<DeployRun> DeployRuns { get; set; } = [];
+    public ICollection<DeployRun>               DeployRuns              { get; set; } = [];
+    public ICollection<RefactorRecommendation>  RefactorRecommendations { get; set; } = [];
+    public ICollection<SimulationRun>           SimulationRuns          { get; set; } = [];
 }
 
 public enum ProductStatus

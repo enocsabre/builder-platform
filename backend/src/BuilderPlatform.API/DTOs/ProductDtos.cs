@@ -22,7 +22,8 @@ public record ProductSummaryDto(
     DateTime  UpdatedAt,
     string    DeployStatus,
     string?   DeployUrl,
-    DateTime? DeployedAt
+    DateTime? DeployedAt,
+    string?   IndustryKey
 );
 
 public record ProductDetailDto(
@@ -57,7 +58,8 @@ public record ProductDetailDto(
     DateTime?                       DeployedAt,
     string?                         DeployCommitHash,
     string?                         DeployBranch,
-    IEnumerable<DeployRunSummaryDto> DeployRuns
+    IEnumerable<DeployRunSummaryDto>        DeployRuns,
+    IEnumerable<RefactorRecommendationDto>  RefactorRecommendations
 );
 
 public record ScaffoldEntryDto(

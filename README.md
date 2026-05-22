@@ -14,7 +14,8 @@ Runtime de generación de SaaS — orquestador que convierte una idea en un proy
 6. Quality gates (build + typecheck + registry) validan el proyecto; autofix repara failures automáticamente
 7. El preview corre el frontend generado en vivo (puerto 3100–3200); cleanup automático de zombies al reiniciar
 8. El proyecto generado se puede abrir directamente en VS Code desde el workspace
-9. Deploy a Vercel con un comando
+9. **Simulation Engine**: 4 escenarios operacionales (hora pico, cocina congestionada, bajo inventario, operación normal) generan datos realistas en tiempo real — el producto se siente vivo durante demos sin ingresar datos manualmente
+10. Deploy a Vercel con un comando
 
 ## Stack
 

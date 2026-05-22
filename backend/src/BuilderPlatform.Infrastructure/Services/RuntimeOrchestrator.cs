@@ -10,7 +10,7 @@ namespace BuilderPlatform.Infrastructure.Services;
 
 public record RuntimeWork(string Type, Guid ProductId, string? Payload = null);
 
-public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<RuntimeOrchestrator> logger, ScaffoldEngine scaffoldEngine, ProjectAwarenessEngine awarenessEngine, RuntimePatchEngine patchEngine, PreviewRunner previewRunner, RuntimeValidationEngine validationEngine, AutofixEngine autofixEngine, DeployEngine deployEngine, RuntimeEventBus bus)
+public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<RuntimeOrchestrator> logger, ScaffoldEngine scaffoldEngine, ProjectAwarenessEngine awarenessEngine, RuntimePatchEngine patchEngine, PreviewRunner previewRunner, RuntimeValidationEngine validationEngine, AutofixEngine autofixEngine, DeployEngine deployEngine, RuntimeEventBus bus, ProductEvolutionService evolutionService, RefactorDetectionService refactorService)
     : BackgroundService
 {
     private readonly Channel<RuntimeWork> _queue =
@@ -348,6 +348,12 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
             AddActivity(db, productId, ActivityType.ProjectScanned, "Estructura del proyecto escaneada",
                 $"{modules.Count} módulo(s) registrados en el registry");
             SaveMemory(db, productId, "module_count", modules.Count.ToString());
+
+            // ── Initialize evolution memory ─────────────────────────────────────
+            evolutionService.RecordScaffold(productId, profile.Industry, modules.ToList(), db);
+            AddActivity(db, productId, ActivityType.EvolutionMemoryUpdated,
+                "Evolution memory inicializada",
+                $"{modules.Count} módulo(s) registrados en evolution memory");
         }
         catch (Exception ex)
         {
@@ -545,6 +551,18 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
         var widgetAdded = false;
         var codeCreated = 0;
 
+        // ── Evolution context (read once before generation) ────────────────────
+        var evolutionCtx = await evolutionService.GetEvolutionContextAsync(productId, db);
+        var relations    = evolutionService.DetectRelations(featureName!, evolutionCtx);
+
+        if (relations.Count > 0)
+        {
+            var connectedWith = string.Join(", ", relations.Select(r => r.To));
+            AddActivity(db, productId, ActivityType.EvolutionRelationsDetected,
+                $"Relaciones detectadas: {featureName} ↔ {connectedWith}",
+                string.Join(" | ", relations.Select(r => $"{r.RelationType}: {r.Reason}")));
+        }
+
         try
         {
             // ── 1. Code scaffold (entity + controller + page) ──────────────────
@@ -641,18 +659,37 @@ public class RuntimeOrchestrator(IServiceScopeFactory scopeFactory, ILogger<Runt
                 $"Bundle completado: {featureName}",
                 $"code={codeCreated} · nav={navAdded} · widget={widgetAdded}", artifact.Id);
 
-            // ── 6. Runtime message ─────────────────────────────────────────────
+            // ── 6. Runtime message (evolution-aware) ───────────────────────────
             var lastMsg = await db.ChatMessages
                 .Where(m => m.ProductId == productId && m.Role == MessageRole.Runtime)
                 .OrderByDescending(m => m.CreatedAt)
                 .FirstOrDefaultAsync(ct);
 
             var msgContent = alreadyRegistered
-                ? ContentGenerator.GenerateFeatureAwareStart(featureName!, product.Name)
-                : ContentGenerator.GenerateFeatureBundleComplete(featureName!, product.Name, codeCreated, navAdded, widgetAdded);
+                ? ContentGenerator.GenerateEvolutionAwareStart(featureName!, product.Name, relations)
+                : ContentGenerator.GenerateEvolutionBundleComplete(featureName!, product.Name, relations, codeCreated, navAdded, widgetAdded);
 
             if (lastMsg is not null) lastMsg.Content = msgContent;
             else AddRuntimeMessage(db, productId, msgContent);
+
+            // ── 7. Record in evolution memory ──────────────────────────────────
+            evolutionService.RecordFeature(productId, featureName!, route, relations, evolutionCtx, db);
+            AddActivity(db, productId, ActivityType.EvolutionMemoryUpdated,
+                $"Evolution memory actualizada: {featureName}",
+                relations.Count > 0
+                    ? $"Conectado con: {string.Join(", ", relations.Select(r => r.To))}"
+                    : "Módulo independiente registrado");
+
+            // ── 8. Refactor detection (after memory update) ────────────────────
+            // evolutionCtx was mutated in-place by RecordFeature (new module/relations added)
+            // so we can detect against it directly without re-reading from DB
+            var newRecs = await refactorService.DetectAndPersistAsync(productId, evolutionCtx, db);
+            if (newRecs.Count > 0)
+            {
+                AddActivity(db, productId, ActivityType.RefactorDetected,
+                    $"{newRecs.Count} recomendación(es) arquitectónica(s) detectada(s)",
+                    string.Join(" | ", newRecs.Select(r => $"[{r.Severity}] {r.Title}")));
+            }
         }
         catch (Exception ex)
         {

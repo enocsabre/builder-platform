@@ -1,11 +1,33 @@
+using System.Text;
 using BuilderPlatform.Infrastructure.Persistence;
 using BuilderPlatform.Infrastructure.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<AppDbContext>(opt =>
     opt.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+var jwtKey = builder.Configuration["Jwt:SecretKey"]
+    ?? throw new InvalidOperationException("Jwt:SecretKey not configured");
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(opt =>
+    {
+        opt.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer           = false,
+            ValidateAudience         = false,
+            ValidateLifetime         = true,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey         = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ClockSkew                = TimeSpan.Zero,
+        };
+    });
+builder.Services.AddAuthorization();
 
 // ScaffoldEngine, ProjectAwarenessEngine, RuntimePatchEngine — stateless singletons
 builder.Services.AddSingleton<ScaffoldEngine>();
@@ -16,6 +38,10 @@ builder.Services.AddSingleton<RuntimeValidationEngine>();
 builder.Services.AddSingleton<AutofixEngine>();
 builder.Services.AddSingleton<DeployEngine>();
 builder.Services.AddSingleton<RuntimeEventBus>();
+builder.Services.AddSingleton<ProductEvolutionService>();
+builder.Services.AddSingleton<RefactorDetectionService>();
+builder.Services.AddSingleton<RefactorExecutionService>();
+builder.Services.AddSingleton<SimulationEngine>();
 
 // RuntimeOrchestrator registered as singleton so controller can inject it,
 // then also registered as the hosted service so the framework starts/stops it.
@@ -44,6 +70,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapControllers();
 
 app.Run();

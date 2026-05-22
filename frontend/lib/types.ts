@@ -85,6 +85,7 @@ export interface ProductSummary {
   deployStatus:   DeployStatus;
   deployUrl:      string | null;
   deployedAt:     string | null;
+  industryKey:    string | null;
 }
 
 export interface Message {
@@ -189,10 +190,70 @@ export interface ProductDetail extends ProductSummary {
   modules:              ProductModule[];
   fileRevisions:        FileRevision[];
   validationRuns:       ValidationRunSummary[];
-  deployCommitHash:     string | null;
-  deployBranch:         string | null;
-  deployRuns:           DeployRunSummary[];
+  deployCommitHash:         string | null;
+  deployBranch:             string | null;
+  deployRuns:               DeployRunSummary[];
+  refactorRecommendations:  RefactorRecommendation[];
 }
 
 export const PROCESSING_STATUSES: ProductStatus[] = ["Discovering", "Architecting", "Planning"];
 export const ACTIVE_STATUSES:     ProductStatus[] = ["Building", "Reviewing"];
+
+export interface EvolutionModule {
+  name:    string;
+  route:   string;
+  layer:   string;
+  addedAt: string;
+}
+
+export interface EvolutionRelation {
+  from:         string;
+  to:           string;
+  relationType: string;
+  reason:       string;
+  detectedAt:   string;
+}
+
+export interface EvolutionDecision {
+  summary: string;
+  madeAt:  string;
+}
+
+export interface EvolutionContext {
+  modules:        EvolutionModule[];
+  relations:      EvolutionRelation[];
+  decisions:      EvolutionDecision[];
+  featureHistory: string[];
+}
+
+export interface SimulationStatus {
+  isRunning:    boolean;
+  scenario:     string | null;
+  opsGenerated: number;
+  runId:        string | null;
+  startedAt:    string | null;
+}
+
+export const SIMULATION_SCENARIO_LABELS: Record<string, string> = {
+  hora_pico:            "Hora pico",
+  cocina_congestionada: "Cocina congestionada",
+  bajo_inventario:      "Bajo inventario",
+  operacion_normal:     "Operación normal",
+};
+
+export interface RefactorRecommendation {
+  id:             string;
+  type:           string;
+  title:          string;
+  severity:       "low" | "medium" | "high";
+  reason:         string;
+  impact:         string;
+  risk:           string;
+  status:         "pending" | "accepted" | "rejected" | "applied" | "failed";
+  note:           string | null;
+  artifactId:     string | null;
+  createdAt:      string;
+  resolvedAt:     string | null;
+  executedAt:     string | null;
+  executionError: string | null;
+}

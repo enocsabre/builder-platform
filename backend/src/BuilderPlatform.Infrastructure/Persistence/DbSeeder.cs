@@ -1,4 +1,5 @@
 using BuilderPlatform.Domain.Entities;
+using BuilderPlatform.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace BuilderPlatform.Infrastructure.Persistence;
@@ -9,16 +10,37 @@ public static class DbSeeder
     {
         await db.Database.MigrateAsync();
 
+        // Seed builder admin user (idempotent)
+        if (!await db.BuilderUsers.AnyAsync())
+        {
+            db.BuilderUsers.Add(new BuilderUser
+            {
+                Email        = "admin@builder.local",
+                PasswordHash = BuilderPasswordHasher.Hash("Builder1234!"),
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Migrate orphaned products (null OwnerUserId) to admin user
+        var admin = await db.BuilderUsers.FirstAsync(u => u.Email == "admin@builder.local");
+        var orphans = await db.Products.Where(p => p.OwnerUserId == null).ToListAsync();
+        if (orphans.Count > 0)
+        {
+            foreach (var p in orphans) p.OwnerUserId = admin.Id;
+            await db.SaveChangesAsync();
+        }
+
         if (await db.Products.AnyAsync()) return;
 
         var product = new Product
         {
-            Id        = Guid.Parse("11111111-1111-1111-1111-111111111111"),
-            Name      = "QuincenaCR",
-            Prompt    = "SaaS de control de personal y planilla quincenal para restaurantes en Costa Rica",
-            Status    = ProductStatus.Building,
-            CreatedAt = DateTime.UtcNow.AddDays(-3),
-            UpdatedAt = DateTime.UtcNow.AddHours(-2),
+            Id          = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            Name        = "QuincenaCR",
+            Prompt      = "SaaS de control de personal y planilla quincenal para restaurantes en Costa Rica",
+            Status      = ProductStatus.Building,
+            OwnerUserId = admin.Id,
+            CreatedAt   = DateTime.UtcNow.AddDays(-3),
+            UpdatedAt   = DateTime.UtcNow.AddHours(-2),
         };
 
         var messages = new List<ChatMessage>
