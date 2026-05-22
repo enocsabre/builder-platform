@@ -1,4 +1,4 @@
-import type { ProductSummary, ProductDetail, Message, Approval, ArtifactSummary, Artifact, EvolutionContext, RefactorRecommendation, SimulationStatus } from "./types";
+import type { ProductSummary, ProductDetail, Message, Approval, ArtifactSummary, Artifact, EvolutionContext, RefactorRecommendation, SimulationStatus, DemoResetResult } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5238";
 
@@ -85,5 +85,9 @@ export const api = {
       request<SimulationStatus>(`/api/products/${id}/simulate/stop`, { method: "POST" }),
     status: (id: string) =>
       request<SimulationStatus>(`/api/products/${id}/simulate/status`),
+  },
+  demo: {
+    reset: (id: string) =>
+      request<DemoResetResult>(`/api/products/${id}/demo/reset`, { method: "POST" }),
   },
 };

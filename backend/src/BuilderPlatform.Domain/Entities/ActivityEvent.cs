@@ -82,4 +82,5 @@ public enum ActivityType
     SimulationOperationGenerated,
     SimulationStopped,
     SimulationCompleted,
+    DemoReset,
 }

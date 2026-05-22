@@ -1403,6 +1403,17 @@ public class ScaffoldEngine(IConfiguration config, ILogger<ScaffoldEngine> logge
                 })}
               </nav>
               <div style={{ padding: "8px", borderTop: "1px solid var(--border)" }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: "6px",
+                  margin: "6px 12px 10px",
+                  padding: "5px 8px",
+                  background: "rgba(99,102,241,0.12)",
+                  border: "1px solid rgba(99,102,241,0.3)",
+                  borderRadius: "6px",
+                }}>
+                  <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#818cf8", flexShrink: 0 }} />
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: "#818cf8", letterSpacing: "0.06em" }}>DEMO ACTIVO</span>
+                </div>
                 <button
                   onClick={async () => {
                     await fetch("/api/auth/logout", { method: "POST" });

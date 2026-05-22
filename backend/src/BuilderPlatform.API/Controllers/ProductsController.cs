@@ -1020,6 +1020,35 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
         return Ok(new SimulationStatusDto(true, status.Value.scenario, status.Value.opsGenerated, null, null));
     }
 
+    // POST /api/products/{id}/demo/reset
+    [HttpPost("{id}/demo/reset")]
+    public async Task<ActionResult<DemoResetDto>> DemoReset(
+        Guid id,
+        [FromServices] SimulationEngine sim,
+        [FromServices] DemoResetEngine demoReset,
+        CancellationToken ct)
+    {
+        var product = await db.Products.FindAsync([id], ct);
+        if (product is null) return NotFound();
+        if (string.IsNullOrEmpty(product.ProjectPath)) return BadRequest("Product has no project path.");
+
+        // Stop active simulation so reset data isn't immediately overwritten
+        if (sim.GetStatus(id) is not null)
+            sim.Stop(id);
+
+        await demoReset.ResetAsync(product.ProjectPath, ct);
+
+        db.ActivityEvents.Add(new ActivityEvent
+        {
+            ProductId = id,
+            EventType = ActivityType.DemoReset,
+            Title     = "Demo reset — datos restaurados al estado inicial",
+        });
+        await db.SaveChangesAsync(ct);
+
+        return Ok(new DemoResetDto(true, "Demo data reset to canonical lunch-service state."));
+    }
+
     // ── Mapping helpers ────────────────────────────────────────────────────────
 
     private static ProductSummaryDto ToSummaryDto(Product p) =>

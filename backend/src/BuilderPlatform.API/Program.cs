@@ -42,6 +42,7 @@ builder.Services.AddSingleton<ProductEvolutionService>();
 builder.Services.AddSingleton<RefactorDetectionService>();
 builder.Services.AddSingleton<RefactorExecutionService>();
 builder.Services.AddSingleton<SimulationEngine>();
+builder.Services.AddScoped<DemoResetEngine>();
 
 // RuntimeOrchestrator registered as singleton so controller can inject it,
 // then also registered as the hosted service so the framework starts/stops it.

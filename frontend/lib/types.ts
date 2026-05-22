@@ -241,6 +241,11 @@ export const SIMULATION_SCENARIO_LABELS: Record<string, string> = {
   operacion_normal:     "Operación normal",
 };
 
+export interface DemoResetResult {
+  reset:   boolean;
+  message: string;
+}
+
 export interface RefactorRecommendation {
   id:             string;
   type:           string;

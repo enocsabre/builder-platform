@@ -9,3 +9,5 @@ public record SimulationStatusDto(
     Guid?   RunId,
     DateTime? StartedAt
 );
+
+public record DemoResetDto(bool Reset, string Message);
