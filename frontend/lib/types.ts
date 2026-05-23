@@ -342,6 +342,51 @@ export interface StrategicRoadmap {
   generatedAt:          string;
 }
 
+// ── Operational Impact types (Sprint 42) ──────────────────────────────────────
+
+export interface OperationalBottleneck {
+  title:       string;
+  description: string;
+  severity:    "critical" | "high" | "medium" | "low";
+  impactArea:  string;
+  resolution:  string;
+  risk:        string;
+  impactScore: number;
+}
+
+export interface WorkflowStatus {
+  name:          string;
+  isCritical:    boolean;
+  phase:         string;
+  coverage:      number;
+  presentSteps:  string[];
+  missingSteps:  string[];
+  businessImpact:string;
+}
+
+export interface ImpactSuggestion {
+  title:            string;
+  operationalValue: string;
+  impactLevel:      "critical" | "high" | "medium";
+  urgency:          "immediate" | "near-term" | "later";
+}
+
+export interface OperationalReport {
+  productId:               string;
+  industry:                string;
+  industryLabel:           string;
+  operationalScore:        number;
+  operationalTier:         "broken" | "limited" | "functional" | "optimized";
+  operationalTierLabel:    string;
+  operationalNarrative:    string;
+  topBottleneckTitle:      string;
+  topBottleneckResolution: string;
+  bottlenecks:             OperationalBottleneck[];
+  workflows:               WorkflowStatus[];
+  topImpactSuggestions:    ImpactSuggestion[];
+  analyzedAt:              string;
+}
+
 export interface RefactorRecommendation {
   id:             string;
   type:           string;

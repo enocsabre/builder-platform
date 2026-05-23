@@ -907,6 +907,29 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
         ));
     }
 
+    // GET /api/products/{id}/operational-impact
+    [HttpGet("{id:guid}/operational-impact")]
+    public async Task<ActionResult<OperationalReportDto>> GetOperationalImpact(
+        Guid id, [FromServices] ProductOperationalImpactEngine impactEngine, CancellationToken ct)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+        var report = await impactEngine.AnalyzeAsync(id, db, ct);
+        return Ok(new OperationalReportDto(
+            report.ProductId, report.Industry, report.IndustryLabel,
+            report.OperationalScore, report.OperationalTier, report.OperationalTierLabel,
+            report.OperationalNarrative, report.TopBottleneckTitle, report.TopBottleneckResolution,
+            report.Bottlenecks.Select(b => new OperationalBottleneckDto(
+                b.Title, b.Description, b.Severity, b.ImpactArea,
+                b.Resolution, b.Risk, b.ImpactScore)).ToList(),
+            report.Workflows.Select(w => new WorkflowStatusDto(
+                w.Name, w.IsCritical, w.Phase, w.Coverage,
+                w.PresentSteps, w.MissingSteps, w.BusinessImpact)).ToList(),
+            report.TopImpactSuggestions.Select(s => new ImpactSuggestionDto(
+                s.Title, s.OperationalValue, s.ImpactLevel, s.Urgency)).ToList(),
+            report.AnalyzedAt
+        ));
+    }
+
     // GET /api/products/{id}/events  — SSE stream (anonymous: EventSource can't send headers)
     [HttpGet("{id:guid}/events")]
     [AllowAnonymous]
