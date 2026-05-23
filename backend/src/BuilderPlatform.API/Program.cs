@@ -43,6 +43,7 @@ builder.Services.AddSingleton<RefactorDetectionService>();
 builder.Services.AddSingleton<RefactorExecutionService>();
 builder.Services.AddSingleton<SimulationEngine>();
 builder.Services.AddSingleton<ProductIntelligenceEngine>();
+builder.Services.AddSingleton<ProductRoadmapEngine>();
 builder.Services.AddScoped<DemoResetEngine>();
 
 // RuntimeOrchestrator registered as singleton so controller can inject it,

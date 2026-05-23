@@ -308,6 +308,40 @@ export interface IntelligenceReport {
   pendingRefactorCount:  number;
 }
 
+// ── Roadmap types (Sprint 41) ──────────────────────────────────────────────
+
+export interface RoadmapMilestone {
+  id:              string;
+  title:           string;
+  phase:           "now" | "next" | "later";
+  priority:        "critical" | "high" | "medium";
+  category:        "core" | "integration" | "growth" | "analytics";
+  why:             string;
+  unlocks:         string;
+  requiredModules: string[];
+}
+
+export interface RoadmapDependency {
+  from:   string;
+  to:     string;
+  reason: string;
+}
+
+export interface StrategicRoadmap {
+  productId:            string;
+  industry:             string;
+  industryLabel:        string;
+  completionScore:      number;
+  totalCheckpoints:     number;
+  completedCheckpoints: number;
+  growthNarrative:      string;
+  nextFocusTitle:       string;
+  nextFocusWhy:         string;
+  milestones:           RoadmapMilestone[];
+  dependencies:         RoadmapDependency[];
+  generatedAt:          string;
+}
+
 export interface RefactorRecommendation {
   id:             string;
   type:           string;

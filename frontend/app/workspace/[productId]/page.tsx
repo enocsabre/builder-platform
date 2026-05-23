@@ -22,6 +22,7 @@ import { EvolutionPanel } from "@/components/EvolutionPanel";
 import { RefactorPanel } from "@/components/RefactorPanel";
 import { SimulationPanel } from "@/components/SimulationPanel";
 import { IntelligencePanel } from "@/components/IntelligencePanel";
+import { RoadmapPanel } from "@/components/RoadmapPanel";
 import { api } from "@/lib/api";
 import type {
   ProductDetail, Message, Activity as ActivityEvent,
@@ -136,8 +137,8 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  type TabKey = "artifacts" | "activity" | "approvals" | "memory" | "scaffold" | "changes" | "structure" | "preview" | "archivos" | "calidad" | "deploy" | "evolution" | "refactor" | "simulacion" | "intelligence";
-  const VALID_TABS = new Set<TabKey>(["artifacts","activity","approvals","memory","scaffold","changes","structure","preview","archivos","calidad","deploy","evolution","refactor","simulacion","intelligence"]);
+  type TabKey = "artifacts" | "activity" | "approvals" | "memory" | "scaffold" | "changes" | "structure" | "preview" | "archivos" | "calidad" | "deploy" | "evolution" | "refactor" | "simulacion" | "intelligence" | "roadmap";
+  const VALID_TABS = new Set<TabKey>(["artifacts","activity","approvals","memory","scaffold","changes","structure","preview","archivos","calidad","deploy","evolution","refactor","simulacion","intelligence","roadmap"]);
   const initialTab = (searchParams.get("tab") ?? "artifacts") as TabKey;
 
   const [product, setProduct]     = useState<ProductDetail | null>(null);
@@ -509,6 +510,9 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
                 icon={<Brain size={13} />} label="Inteligencia"
                 count={intelligence?.topInsights.length ?? 0}
                 countClass={intelligence?.criticalCount ? "badge-danger" : "badge-indigo"} />
+              <TabBtn active={activeTab === "roadmap"} onClick={() => setActiveTab("roadmap")}
+                icon={<Map size={13} />} label="Roadmap"
+                count={0} countClass="badge-muted" />
               <TabBtn active={activeTab === "evolution"} onClick={() => setActiveTab("evolution")}
                 icon={<Brain size={13} />} label="Evolución" count={0} />
               <TabBtn active={activeTab === "simulacion"} onClick={() => setActiveTab("simulacion")}
@@ -555,6 +559,11 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
               {activeTab === "intelligence" && (
                 <div style={{ padding: "16px 20px" }}>
                   <IntelligencePanel productId={productId} />
+                </div>
+              )}
+              {activeTab === "roadmap" && (
+                <div style={{ padding: "16px 20px" }}>
+                  <RoadmapPanel productId={productId} />
                 </div>
               )}
               {activeTab === "evolution"  && <EvolutionPanel productId={productId} />}

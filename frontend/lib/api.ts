@@ -1,4 +1,4 @@
-import type { ProductSummary, ProductDetail, Message, Approval, ArtifactSummary, Artifact, EvolutionContext, RefactorRecommendation, SimulationStatus, DemoResetResult, IntelligenceReport } from "./types";
+import type { ProductSummary, ProductDetail, Message, Approval, ArtifactSummary, Artifact, EvolutionContext, RefactorRecommendation, SimulationStatus, DemoResetResult, IntelligenceReport, StrategicRoadmap } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5238";
 
@@ -93,5 +93,9 @@ export const api = {
 
   intelligence: {
     get: (id: string) => request<IntelligenceReport>(`/api/products/${id}/intelligence`),
+  },
+
+  roadmap: {
+    get: (id: string) => request<StrategicRoadmap>(`/api/products/${id}/roadmap`),
   },
 };

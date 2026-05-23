@@ -888,6 +888,25 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
         ));
     }
 
+    // GET /api/products/{id}/roadmap
+    [HttpGet("{id:guid}/roadmap")]
+    public async Task<ActionResult<StrategicRoadmapDto>> GetRoadmap(
+        Guid id, [FromServices] ProductRoadmapEngine roadmapEngine, CancellationToken ct)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+        var roadmap = await roadmapEngine.GenerateAsync(id, db, ct);
+        return Ok(new StrategicRoadmapDto(
+            roadmap.ProductId, roadmap.Industry, roadmap.IndustryLabel,
+            roadmap.CompletionScore, roadmap.TotalCheckpoints, roadmap.CompletedCheckpoints,
+            roadmap.GrowthNarrative, roadmap.NextFocusTitle, roadmap.NextFocusWhy,
+            roadmap.Milestones.Select(m => new RoadmapMilestoneDto(
+                m.Id, m.Title, m.Phase, m.Priority, m.Category,
+                m.Why, m.Unlocks, m.RequiredModules)).ToList(),
+            roadmap.Dependencies.Select(d => new RoadmapDependencyDto(d.From, d.To, d.Reason)).ToList(),
+            roadmap.GeneratedAt
+        ));
+    }
+
     // GET /api/products/{id}/events  — SSE stream (anonymous: EventSource can't send headers)
     [HttpGet("{id:guid}/events")]
     [AllowAnonymous]
