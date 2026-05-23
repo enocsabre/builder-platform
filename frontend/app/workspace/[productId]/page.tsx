@@ -25,7 +25,7 @@ import { IntelligencePanel } from "@/components/IntelligencePanel";
 import { api } from "@/lib/api";
 import type {
   ProductDetail, Message, Activity as ActivityEvent,
-  Approval, MemoryEntry, ArtifactSummary,
+  Approval, MemoryEntry, ArtifactSummary, IntelligenceReport,
 } from "@/lib/types";
 import { PROCESSING_STATUSES, ACTIVE_STATUSES } from "@/lib/types";
 
@@ -152,6 +152,7 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
   const [currentStep, setCurrentStep]     = useState<string | null>(null);
   const [vsCodeLoading, setVsCodeLoading] = useState(false);
   const [vsCodeError, setVsCodeError]     = useState<string | null>(null);
+  const [intelligence, setIntelligence]   = useState<IntelligenceReport | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -163,6 +164,13 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
       return p;
     });
     setLoading(false);
+  }, [productId]);
+
+  // Fetch intelligence once on mount (proactive — no user action needed)
+  useEffect(() => {
+    api.intelligence.get(productId)
+      .then(setIntelligence)
+      .catch(() => null);
   }, [productId]);
 
   // SSE real-time stream — immediate ping on any backend state change
@@ -360,6 +368,14 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
         {/* runtime status bar */}
         <RuntimeBar status={product.status} isProcessing={product.isProcessing} runtimePhase={product.runtimePhase} />
 
+        {/* proactive insights banner — auto-shown when insights exist */}
+        {intelligence && intelligence.topInsights.length > 0 && (
+          <ProactiveInsightsBanner
+            intelligence={intelligence}
+            onViewInsights={() => setActiveTab("intelligence")}
+          />
+        )}
+
         {/* split layout */}
         <div className="flex-1 flex overflow-hidden">
           {/* LEFT — Chat */}
@@ -490,8 +506,9 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
                   (product.refactorRecommendations?.some(r => r.status === "pending" && r.severity === "medium")) ? "badge-warn" : "badge-muted"
                 } />
               <TabBtn active={activeTab === "intelligence"} onClick={() => setActiveTab("intelligence")}
-                icon={<Brain size={13} />} label="Inteligencia" count={0}
-                countClass="badge-indigo" />
+                icon={<Brain size={13} />} label="Inteligencia"
+                count={intelligence?.topInsights.length ?? 0}
+                countClass={intelligence?.criticalCount ? "badge-danger" : "badge-indigo"} />
               <TabBtn active={activeTab === "evolution"} onClick={() => setActiveTab("evolution")}
                 icon={<Brain size={13} />} label="Evolución" count={0} />
               <TabBtn active={activeTab === "simulacion"} onClick={() => setActiveTab("simulacion")}
@@ -556,6 +573,78 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
         />
       )}
     </AppShell>
+  );
+}
+
+// ── Proactive Insights Banner ─────────────────────────────────────────────────
+
+function ProactiveInsightsBanner({
+  intelligence,
+  onViewInsights,
+}: {
+  intelligence: IntelligenceReport;
+  onViewInsights: () => void;
+}) {
+  const { topInsights, criticalCount, healthScoreLabel, healthScore, healthScoreNumeric } = intelligence;
+  const top = topInsights[0];
+
+  const healthColor =
+    healthScore === "mature"      ? "var(--status-active-text)"  :
+    healthScore === "growing"     ? "var(--status-info-text)"    :
+    healthScore === "operational" ? "var(--status-warn-text)"    :
+    "var(--status-danger-text)";
+
+  const bannerBg = criticalCount > 0
+    ? "rgba(239,68,68,0.06)"
+    : "rgba(99,102,241,0.06)";
+
+  const bannerBorder = criticalCount > 0
+    ? "1px solid rgba(239,68,68,0.2)"
+    : "1px solid rgba(99,102,241,0.15)";
+
+  return (
+    <div style={{
+      padding: "8px 16px",
+      background: bannerBg,
+      borderBottom: bannerBorder,
+      display: "flex", alignItems: "center", gap: "12px",
+      flexShrink: 0,
+    }}>
+      <Brain size={13} style={{ color: healthColor, flexShrink: 0 }} />
+
+      {/* Health score pill */}
+      <span style={{
+        fontSize: "10px", fontWeight: "700", padding: "2px 7px", borderRadius: "99px",
+        background: healthColor + "22", color: healthColor,
+        letterSpacing: "0.04em", flexShrink: 0,
+      }}>
+        {healthScoreLabel.toUpperCase()} · {healthScoreNumeric}
+      </span>
+
+      {/* Top insight summary */}
+      {top && (
+        <span style={{ fontSize: "12px", color: "var(--muted)", flex: 1, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+          {criticalCount > 0
+            ? <><span style={{ color: "var(--status-danger-text)", fontWeight: "600" }}>{criticalCount} gap{criticalCount > 1 ? "s" : ""} crítico{criticalCount > 1 ? "s" : ""}</span> · {top.title}</>
+            : top.title
+          }
+        </span>
+      )}
+
+      <button
+        onClick={onViewInsights}
+        style={{
+          fontSize: "11px", fontWeight: "600",
+          color: healthColor,
+          background: "none", border: "none", cursor: "pointer",
+          padding: "3px 8px", borderRadius: "6px",
+          flexShrink: 0,
+          display: "flex", alignItems: "center", gap: "4px",
+        }}
+      >
+        Ver análisis →
+      </button>
+    </div>
   );
 }
 

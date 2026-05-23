@@ -4,9 +4,10 @@ import { useState, useEffect } from "react";
 import {
   Brain, AlertTriangle, CheckCircle2, ArrowRight,
   Lightbulb, Link2, TrendingUp, Zap, RefreshCw,
+  Target, Activity,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { IntelligenceReport, IntelligenceGap, IntelligenceConnection, IntelligenceSuggestion } from "@/lib/types";
+import type { IntelligenceReport, IntelligenceGap, IntelligenceConnection, IntelligenceSuggestion, ProactiveInsight } from "@/lib/types";
 
 interface Props {
   productId: string;
@@ -50,6 +51,40 @@ function categoryLabel(c: string): string {
   return "Operaciones";
 }
 
+function healthColor(s: string): string {
+  if (s === "mature")      return "var(--status-active-text)";
+  if (s === "growing")     return "var(--status-info-text)";
+  if (s === "operational") return "var(--status-warn-text)";
+  return "var(--status-danger-text)";
+}
+
+function healthBg(s: string): string {
+  if (s === "mature")      return "var(--status-active-bg)";
+  if (s === "growing")     return "var(--status-info-bg)";
+  if (s === "operational") return "var(--status-warn-bg)";
+  return "var(--status-danger-bg)";
+}
+
+function healthBar(s: string): string {
+  if (s === "mature")      return "#22c55e";
+  if (s === "growing")     return "#38bdf8";
+  if (s === "operational") return "#f59e0b";
+  return "#ef4444";
+}
+
+function insightSeverityColor(sev: string): string {
+  if (sev === "high")   return "var(--status-danger-text)";
+  if (sev === "medium") return "var(--status-warn-text)";
+  return "var(--status-info-text)";
+}
+
+function insightTypeIcon(type: string) {
+  if (type === "critical_gap")        return "⚠";
+  if (type === "missing_connection")  return "⟶";
+  if (type === "gap_warning")         return "◎";
+  return "↗";
+}
+
 export function IntelligencePanel({ productId }: Props) {
   const [report, setReport]   = useState<IntelligenceReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -86,6 +121,72 @@ export function IntelligencePanel({ productId }: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px", padding: "4px 0" }}>
+
+      {/* ── Health Score Card ─────────────────────────────────────────────── */}
+      <div style={{
+        borderRadius: "12px", padding: "16px 20px",
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        display: "flex", alignItems: "center", gap: "16px",
+      }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+            <Activity size={13} style={{ color: healthColor(report.healthScore) }} />
+            <span style={{ fontSize: "11px", fontWeight: "700", color: "var(--muted)", letterSpacing: "0.05em" }}>
+              PRODUCT HEALTH
+            </span>
+            <span style={{
+              fontSize: "10px", fontWeight: "700", padding: "2px 8px", borderRadius: "99px",
+              background: healthBg(report.healthScore),
+              color: healthColor(report.healthScore),
+              letterSpacing: "0.04em",
+            }}>
+              {report.healthScoreLabel.toUpperCase()}
+            </span>
+          </div>
+          <div style={{ height: "6px", borderRadius: "99px", background: "var(--border)", overflow: "hidden" }}>
+            <div style={{
+              height: "100%", borderRadius: "99px",
+              width: `${report.healthScoreNumeric}%`,
+              background: healthBar(report.healthScore),
+              transition: "width 0.6s ease",
+            }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px" }}>
+            <span style={{ fontSize: "10px", color: "var(--muted)" }}>Inicial</span>
+            <span style={{ fontSize: "10px", fontWeight: "600", color: healthColor(report.healthScore) }}>
+              {report.healthScoreNumeric}/100
+            </span>
+            <span style={{ fontSize: "10px", color: "var(--muted)" }}>Maduro</span>
+          </div>
+        </div>
+        {report.criticalCount > 0 && (
+          <div style={{
+            flexShrink: 0, textAlign: "center",
+            padding: "8px 14px", borderRadius: "10px",
+            background: "var(--status-danger-bg)",
+          }}>
+            <div style={{ fontSize: "20px", fontWeight: "800", color: "var(--status-danger-text)", lineHeight: 1 }}>
+              {report.criticalCount}
+            </div>
+            <div style={{ fontSize: "9px", fontWeight: "700", color: "var(--status-danger-text)", marginTop: "2px", letterSpacing: "0.04em" }}>
+              CRÍTICO{report.criticalCount !== 1 ? "S" : ""}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Top Proactive Insights ────────────────────────────────────────── */}
+      {report.topInsights.length > 0 && (
+        <section>
+          <SectionHeader Icon={Target} label="Insights detectados" count={report.topInsights.length} color="var(--status-indigo-text)" />
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {report.topInsights.map((ins, i) => (
+              <ProactiveInsightCard key={i} insight={ins} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ── Header: stage + narrative ─────────────────────────────────────── */}
       <div style={{
@@ -296,6 +397,52 @@ function ConnectionCard({ conn }: { conn: IntelligenceConnection }) {
         </div>
         <div style={{ fontSize: "10px", color: "var(--muted)", opacity: 0.7 }}>
           Impacto: {conn.impact}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProactiveInsightCard({ insight }: { insight: ProactiveInsight }) {
+  const isHigh   = insight.severity === "high";
+  const isMedium = insight.severity === "medium";
+  const borderColor = isHigh
+    ? "var(--status-danger-text)22"
+    : isMedium ? "var(--status-warn-text)22" : "var(--border)";
+
+  return (
+    <div style={{
+      padding: "10px 14px", borderRadius: "8px",
+      background: "var(--surface)",
+      border: `1px solid ${borderColor}`,
+      display: "flex", alignItems: "flex-start", gap: "10px",
+    }}>
+      <span style={{
+        fontSize: "13px", marginTop: "1px", flexShrink: 0,
+        color: insightSeverityColor(insight.severity),
+        fontWeight: "700",
+      }}>
+        {insightTypeIcon(insight.type)}
+      </span>
+      <div style={{ flex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "2px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "12px", fontWeight: "700", color: "var(--foreground)" }}>
+            {insight.title}
+          </span>
+          <span style={{
+            fontSize: "9px", fontWeight: "700", padding: "1px 6px", borderRadius: "99px",
+            background: isHigh ? "var(--status-danger-bg)" : isMedium ? "var(--status-warn-bg)" : "var(--surface-elevated)",
+            color: insightSeverityColor(insight.severity),
+            letterSpacing: "0.04em",
+          }}>
+            {insight.severity.toUpperCase()}
+          </span>
+        </div>
+        <div style={{ fontSize: "11px", color: "var(--muted)", lineHeight: "1.5", marginBottom: "3px" }}>
+          {insight.detail}
+        </div>
+        <div style={{ fontSize: "10px", fontWeight: "600", color: insightSeverityColor(insight.severity), opacity: 0.85 }}>
+          → {insight.action}
         </div>
       </div>
     </div>

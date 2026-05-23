@@ -878,7 +878,10 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
             report.Gaps.Select(g => new IntelligenceGapDto(g.Module, g.Reason, g.Priority, g.Category)).ToList(),
             report.Connections.Select(c => new IntelligenceConnectionDto(c.From, c.To, c.Label, c.Detected, c.Impact)).ToList(),
             report.Suggestions.Select(s => new IntelligenceSuggestionDto(s.Title, s.Context, s.Impact, s.Category)).ToList(),
-            report.Narrative, report.AnalyzedAt
+            report.Narrative, report.AnalyzedAt,
+            report.HealthScore, report.HealthScoreLabel, report.HealthScoreNumeric,
+            report.CriticalCount,
+            report.TopInsights.Select(i => new ProactiveInsightDto(i.Type, i.Severity, i.Title, i.Detail, i.Action)).ToList()
         ));
     }
 

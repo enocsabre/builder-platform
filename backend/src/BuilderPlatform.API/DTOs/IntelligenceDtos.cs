@@ -22,6 +22,14 @@ public record IntelligenceSuggestionDto(
     string Category
 );
 
+public record ProactiveInsightDto(
+    string Type,
+    string Severity,
+    string Title,
+    string Detail,
+    string Action
+);
+
 public record IntelligenceReportDto(
     string                             ProductId,
     string                             Industry,
@@ -34,5 +42,11 @@ public record IntelligenceReportDto(
     List<IntelligenceConnectionDto>    Connections,
     List<IntelligenceSuggestionDto>    Suggestions,
     string                             Narrative,
-    DateTime                           AnalyzedAt
+    DateTime                           AnalyzedAt,
+    // Sprint 39
+    string                             HealthScore,
+    string                             HealthScoreLabel,
+    int                                HealthScoreNumeric,
+    int                                CriticalCount,
+    List<ProactiveInsightDto>          TopInsights
 );

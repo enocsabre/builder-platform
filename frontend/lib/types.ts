@@ -270,6 +270,14 @@ export interface IntelligenceSuggestion {
   category: string;
 }
 
+export interface ProactiveInsight {
+  type:     "critical_gap" | "missing_connection" | "gap_warning" | "evolution";
+  severity: "high" | "medium" | "low";
+  title:    string;
+  detail:   string;
+  action:   string;
+}
+
 export interface IntelligenceReport {
   productId:             string;
   industry:              string;
@@ -283,6 +291,12 @@ export interface IntelligenceReport {
   suggestions:           IntelligenceSuggestion[];
   narrative:             string;
   analyzedAt:            string;
+  // Sprint 39
+  healthScore:           "starter" | "operational" | "growing" | "mature";
+  healthScoreLabel:      string;
+  healthScoreNumeric:    number;
+  criticalCount:         number;
+  topInsights:           ProactiveInsight[];
 }
 
 export interface RefactorRecommendation {

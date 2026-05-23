@@ -27,6 +27,14 @@ public record IntelligenceSuggestion(
     string Category    // "operational" | "automation" | "reporting" | "financial"
 );
 
+public record ProactiveInsight(
+    string Type,      // "critical_gap" | "missing_connection" | "evolution"
+    string Severity,  // "high" | "medium" | "low"
+    string Title,
+    string Detail,
+    string Action
+);
+
 public record IntelligenceReport(
     string                       ProductId,
     string                       Industry,
@@ -39,7 +47,13 @@ public record IntelligenceReport(
     List<IntelligenceConnection> Connections,
     List<IntelligenceSuggestion> Suggestions,
     string                       Narrative,
-    DateTime                     AnalyzedAt
+    DateTime                     AnalyzedAt,
+    // ── Sprint 39: Proactive Intelligence ─────────────────────────────────────
+    string                       HealthScore,        // "starter"|"operational"|"growing"|"mature"
+    string                       HealthScoreLabel,   // "Inicial"|"Operacional"|"Creciendo"|"Maduro"
+    int                          HealthScoreNumeric, // 0-100
+    int                          CriticalCount,      // high-severity gap count
+    List<ProactiveInsight>       TopInsights         // max 4 actionable items
 );
 
 // ── Engine ────────────────────────────────────────────────────────────────────
@@ -472,6 +486,67 @@ public class ProductIntelligenceEngine
             _         => profile.GrowthNarrative,
         };
 
+        // ── Health Score (0-100) ──────────────────────────────────────────────
+        var detectedConnCount = connections.Count(c => c.Detected);
+        var highGapCount      = gaps.Count(g => g.Priority == "high");
+
+        var rawScore = Math.Min(coreHits * 15, 60)
+                     + Math.Min(growthHits * 5,  30)
+                     + Math.Min(detectedConnCount * 5, 15)
+                     - highGapCount * 15;
+
+        var healthNumeric = Math.Clamp(rawScore, 0, 100);
+
+        var (healthScore, healthLabel) = healthNumeric switch
+        {
+            >= 75 => ("mature",      "Maduro"),
+            >= 50 => ("growing",     "Creciendo"),
+            >= 25 => ("operational", "Operacional"),
+            _     => ("starter",     "Inicial"),
+        };
+
+        // ── Proactive Insights (top 4, highest severity first) ────────────────
+        var topInsights = new List<ProactiveInsight>();
+
+        foreach (var gap in gaps.Where(g => g.Priority == "high").Take(2))
+            topInsights.Add(new ProactiveInsight(
+                Type:     "critical_gap",
+                Severity: "high",
+                Title:    $"Falta {gap.Module}",
+                Detail:   gap.Reason,
+                Action:   $"Agregar {gap.Module}"
+            ));
+
+        foreach (var conn in connections.Where(c => !c.Detected && c.Impact != "").Take(2))
+            topInsights.Add(new ProactiveInsight(
+                Type:     "missing_connection",
+                Severity: "medium",
+                Title:    $"{conn.From} desconectado de {conn.To}",
+                Detail:   conn.Label,
+                Action:   $"Conectar {conn.From} → {conn.To}"
+            ));
+
+        foreach (var gap in gaps.Where(g => g.Priority == "medium").Take(1))
+        {
+            if (topInsights.Count < 3)
+                topInsights.Add(new ProactiveInsight(
+                    Type:     "gap_warning",
+                    Severity: "medium",
+                    Title:    $"Se recomienda {gap.Module}",
+                    Detail:   gap.Reason,
+                    Action:   $"Agregar {gap.Module}"
+                ));
+        }
+
+        if (topInsights.Count < 2 && !string.IsNullOrEmpty(milestone))
+            topInsights.Add(new ProactiveInsight(
+                Type:     "evolution",
+                Severity: "low",
+                Title:    "Próximo hito operacional",
+                Detail:   milestone,
+                Action:   milestone
+            ));
+
         return new IntelligenceReport(
             ProductId:             productId.ToString(),
             Industry:              industry,
@@ -484,7 +559,12 @@ public class ProductIntelligenceEngine
             Connections:           connections,
             Suggestions:           suggestions,
             Narrative:             narrative,
-            AnalyzedAt:            DateTime.UtcNow
+            AnalyzedAt:            DateTime.UtcNow,
+            HealthScore:           healthScore,
+            HealthScoreLabel:      healthLabel,
+            HealthScoreNumeric:    healthNumeric,
+            CriticalCount:         highGapCount,
+            TopInsights:           topInsights
         );
     }
 
@@ -494,5 +574,6 @@ public class ProductIntelligenceEngine
     private static IntelligenceReport Empty(Guid productId) =>
         new(productId.ToString(), "general", "General", 0, "starter", "SaaS Inicial",
             "Agregar módulos base al sistema", [], [], [],
-            "El sistema está en fase inicial.", DateTime.UtcNow);
+            "El sistema está en fase inicial.", DateTime.UtcNow,
+            "starter", "Inicial", 0, 0, []);
 }
