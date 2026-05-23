@@ -865,6 +865,23 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
         ));
     }
 
+    // GET /api/products/{id}/intelligence
+    [HttpGet("{id:guid}/intelligence")]
+    public async Task<ActionResult<IntelligenceReportDto>> GetIntelligence(
+        Guid id, [FromServices] ProductIntelligenceEngine intelligenceEngine, CancellationToken ct)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+        var report = await intelligenceEngine.AnalyzeAsync(id, db, ct);
+        return Ok(new IntelligenceReportDto(
+            report.ProductId, report.Industry, report.IndustryLabel, report.ModuleCount,
+            report.EvolutionStage, report.EvolutionStageLabel, report.EvolutionNextMilestone,
+            report.Gaps.Select(g => new IntelligenceGapDto(g.Module, g.Reason, g.Priority, g.Category)).ToList(),
+            report.Connections.Select(c => new IntelligenceConnectionDto(c.From, c.To, c.Label, c.Detected, c.Impact)).ToList(),
+            report.Suggestions.Select(s => new IntelligenceSuggestionDto(s.Title, s.Context, s.Impact, s.Category)).ToList(),
+            report.Narrative, report.AnalyzedAt
+        ));
+    }
+
     // GET /api/products/{id}/events  — SSE stream (anonymous: EventSource can't send headers)
     [HttpGet("{id:guid}/events")]
     [AllowAnonymous]
@@ -1036,7 +1053,8 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
         if (sim.GetStatus(id) is not null)
             sim.Stop(id);
 
-        await demoReset.ResetAsync(product.ProjectPath, ct);
+        var apiBase = $"{Request.Scheme}://{Request.Host}";
+        await demoReset.ResetAsync(product.ProjectPath, id, apiBase, ct);
 
         db.ActivityEvents.Add(new ActivityEvent
         {

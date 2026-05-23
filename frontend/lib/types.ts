@@ -246,6 +246,45 @@ export interface DemoResetResult {
   message: string;
 }
 
+// ── Intelligence types ─────────────────────────────────────────────────────────
+
+export interface IntelligenceGap {
+  module:   string;
+  reason:   string;
+  priority: "high" | "medium" | "low";
+  category: string;
+}
+
+export interface IntelligenceConnection {
+  from:     string;
+  to:       string;
+  label:    string;
+  detected: boolean;
+  impact:   string;
+}
+
+export interface IntelligenceSuggestion {
+  title:    string;
+  context:  string;
+  impact:   string;
+  category: string;
+}
+
+export interface IntelligenceReport {
+  productId:             string;
+  industry:              string;
+  industryLabel:         string;
+  moduleCount:           number;
+  evolutionStage:        "starter" | "growth" | "mature";
+  evolutionStageLabel:   string;
+  evolutionNextMilestone:string;
+  gaps:                  IntelligenceGap[];
+  connections:           IntelligenceConnection[];
+  suggestions:           IntelligenceSuggestion[];
+  narrative:             string;
+  analyzedAt:            string;
+}
+
 export interface RefactorRecommendation {
   id:             string;
   type:           string;

@@ -1,4 +1,4 @@
-import type { ProductSummary, ProductDetail, Message, Approval, ArtifactSummary, Artifact, EvolutionContext, RefactorRecommendation, SimulationStatus, DemoResetResult } from "./types";
+import type { ProductSummary, ProductDetail, Message, Approval, ArtifactSummary, Artifact, EvolutionContext, RefactorRecommendation, SimulationStatus, DemoResetResult, IntelligenceReport } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5238";
 
@@ -89,5 +89,9 @@ export const api = {
   demo: {
     reset: (id: string) =>
       request<DemoResetResult>(`/api/products/${id}/demo/reset`, { method: "POST" }),
+  },
+
+  intelligence: {
+    get: (id: string) => request<IntelligenceReport>(`/api/products/${id}/intelligence`),
   },
 };

@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, use, useCallback } from "react";
 import { useProductStream } from "@/lib/stream";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft, ExternalLink, Send, Check, X,
   Clock, Activity, CheckSquare, MessageSquare, Database,
@@ -21,6 +21,7 @@ import DeployPanel from "@/components/DeployPanel";
 import { EvolutionPanel } from "@/components/EvolutionPanel";
 import { RefactorPanel } from "@/components/RefactorPanel";
 import { SimulationPanel } from "@/components/SimulationPanel";
+import { IntelligencePanel } from "@/components/IntelligencePanel";
 import { api } from "@/lib/api";
 import type {
   ProductDetail, Message, Activity as ActivityEvent,
@@ -133,12 +134,17 @@ const intentLabel: Record<string, string> = {
 export default function ProductWorkspacePage({ params }: { params: Promise<{ productId: string }> }) {
   const { productId } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  type TabKey = "artifacts" | "activity" | "approvals" | "memory" | "scaffold" | "changes" | "structure" | "preview" | "archivos" | "calidad" | "deploy" | "evolution" | "refactor" | "simulacion" | "intelligence";
+  const VALID_TABS = new Set<TabKey>(["artifacts","activity","approvals","memory","scaffold","changes","structure","preview","archivos","calidad","deploy","evolution","refactor","simulacion","intelligence"]);
+  const initialTab = (searchParams.get("tab") ?? "artifacts") as TabKey;
 
   const [product, setProduct]     = useState<ProductDetail | null>(null);
   const [loading, setLoading]     = useState(true);
   const [input, setInput]         = useState("");
   const [sending, setSending]     = useState(false);
-  const [activeTab, setActiveTab] = useState<"artifacts" | "activity" | "approvals" | "memory" | "scaffold" | "changes" | "structure" | "preview" | "archivos" | "calidad" | "deploy" | "evolution" | "refactor" | "simulacion">("artifacts");
+  const [activeTab, setActiveTab] = useState<TabKey>(VALID_TABS.has(initialTab) ? initialTab : "artifacts");
   const [resolvingId, setResolvingId]     = useState<string | null>(null);
   const [previewActioning, setPreviewActioning] = useState(false);
   const [prevActivityCount, setPrevActivityCount] = useState(0);
@@ -483,6 +489,9 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
                   (product.refactorRecommendations?.some(r => r.status === "pending" && r.severity === "high")) ? "badge-danger" :
                   (product.refactorRecommendations?.some(r => r.status === "pending" && r.severity === "medium")) ? "badge-warn" : "badge-muted"
                 } />
+              <TabBtn active={activeTab === "intelligence"} onClick={() => setActiveTab("intelligence")}
+                icon={<Brain size={13} />} label="Inteligencia" count={0}
+                countClass="badge-indigo" />
               <TabBtn active={activeTab === "evolution"} onClick={() => setActiveTab("evolution")}
                 icon={<Brain size={13} />} label="Evolución" count={0} />
               <TabBtn active={activeTab === "simulacion"} onClick={() => setActiveTab("simulacion")}
@@ -525,7 +534,12 @@ export default function ProductWorkspacePage({ params }: { params: Promise<{ pro
               {activeTab === "archivos"   && <FilesPanel product={product} />}
               {activeTab === "calidad"    && <QualityPanel product={product} />}
               {activeTab === "deploy"     && <DeployPanel product={product} onRefresh={load} />}
-              {activeTab === "refactor"   && <RefactorPanel productId={productId} onActivity={load} />}
+              {activeTab === "refactor"     && <RefactorPanel productId={productId} onActivity={load} />}
+              {activeTab === "intelligence" && (
+                <div style={{ padding: "16px 20px" }}>
+                  <IntelligencePanel productId={productId} />
+                </div>
+              )}
               {activeTab === "evolution"  && <EvolutionPanel productId={productId} />}
               {activeTab === "simulacion" && <SimulationPanel productId={productId} onActivity={load} />}
               {activeTab === "memory"     && <MemoryPanel entries={product.memory} />}
