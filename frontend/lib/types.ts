@@ -342,6 +342,49 @@ export interface StrategicRoadmap {
   generatedAt:          string;
 }
 
+// ── Capacity Intelligence types (Sprint 43) ───────────────────────────────────
+
+export interface SaturationPoint {
+  title:            string;
+  description:      string;
+  severity:         "critical" | "high" | "medium";
+  collapseScenario: string;
+  automationFix:    string;
+  scalingRisk:      number;
+}
+
+export interface ManualOperation {
+  title:          string;
+  description:    string;
+  humanCost:      "critical" | "high" | "medium";
+  impactOnGrowth: string;
+  automationPath: string;
+}
+
+export interface AutomationOpportunity {
+  title:            string;
+  operationalValue: string;
+  impact:           "transformational" | "high" | "medium";
+  urgency:          "immediate" | "near-term" | "later";
+  unlocks:          string;
+}
+
+export interface CapacityReport {
+  productId:                  string;
+  industry:                   string;
+  industryLabel:              string;
+  capacityScore:              number;
+  capacityTier:               "manual" | "partial" | "scalable" | "mature";
+  capacityTierLabel:          string;
+  scalingNarrative:           string;
+  topRiskTitle:               string;
+  topRiskDescription:         string;
+  saturationPoints:           SaturationPoint[];
+  manualOperations:           ManualOperation[];
+  topAutomationOpportunities: AutomationOpportunity[];
+  analyzedAt:                 string;
+}
+
 // ── Operational Impact types (Sprint 42) ──────────────────────────────────────
 
 export interface OperationalBottleneck {

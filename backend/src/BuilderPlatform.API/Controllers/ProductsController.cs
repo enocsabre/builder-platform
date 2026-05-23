@@ -930,6 +930,27 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
         ));
     }
 
+    // GET /api/products/{id}/capacity
+    [HttpGet("{id:guid}/capacity")]
+    public async Task<ActionResult<CapacityReportDto>> GetCapacity(
+        Guid id, [FromServices] ProductCapacityEngine capacityEngine, CancellationToken ct)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+        var report = await capacityEngine.AnalyzeAsync(id, db, ct);
+        return Ok(new CapacityReportDto(
+            report.ProductId, report.Industry, report.IndustryLabel,
+            report.CapacityScore, report.CapacityTier, report.CapacityTierLabel,
+            report.ScalingNarrative, report.TopRiskTitle, report.TopRiskDescription,
+            report.SaturationPoints.Select(s => new SaturationPointDto(
+                s.Title, s.Description, s.Severity, s.CollapseScenario, s.AutomationFix, s.ScalingRisk)).ToList(),
+            report.ManualOperations.Select(m => new ManualOperationDto(
+                m.Title, m.Description, m.HumanCost, m.ImpactOnGrowth, m.AutomationPath)).ToList(),
+            report.TopAutomationOpportunities.Select(a => new AutomationOpportunityDto(
+                a.Title, a.OperationalValue, a.Impact, a.Urgency, a.Unlocks)).ToList(),
+            report.AnalyzedAt
+        ));
+    }
+
     // GET /api/products/{id}/events  — SSE stream (anonymous: EventSource can't send headers)
     [HttpGet("{id:guid}/events")]
     [AllowAnonymous]
