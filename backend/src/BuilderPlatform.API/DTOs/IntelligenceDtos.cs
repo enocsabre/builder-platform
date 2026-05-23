@@ -27,7 +27,10 @@ public record ProactiveInsightDto(
     string Severity,
     string Title,
     string Detail,
-    string Action
+    string Action,
+    // Sprint 40
+    int    DaysSinceDetectable,
+    string InsightStage
 );
 
 public record IntelligenceReportDto(
@@ -48,5 +51,11 @@ public record IntelligenceReportDto(
     string                             HealthScoreLabel,
     int                                HealthScoreNumeric,
     int                                CriticalCount,
-    List<ProactiveInsightDto>          TopInsights
+    List<ProactiveInsightDto>          TopInsights,
+    // Sprint 40
+    int                                ProductAgeDays,
+    int                                GapAgeDays,
+    int                                OperationalDebtCount,
+    int                                RecentModuleCount,
+    int                                PendingRefactorCount
 );

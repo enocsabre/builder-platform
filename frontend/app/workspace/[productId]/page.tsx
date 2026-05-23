@@ -585,7 +585,7 @@ function ProactiveInsightsBanner({
   intelligence: IntelligenceReport;
   onViewInsights: () => void;
 }) {
-  const { topInsights, criticalCount, healthScoreLabel, healthScore, healthScoreNumeric } = intelligence;
+  const { topInsights, criticalCount, healthScoreLabel, healthScore, healthScoreNumeric, operationalDebtCount } = intelligence;
   const top = topInsights[0];
 
   const healthColor =
@@ -594,13 +594,13 @@ function ProactiveInsightsBanner({
     healthScore === "operational" ? "var(--status-warn-text)"    :
     "var(--status-danger-text)";
 
-  const bannerBg = criticalCount > 0
-    ? "rgba(239,68,68,0.06)"
-    : "rgba(99,102,241,0.06)";
+  const hasDebt      = (operationalDebtCount ?? 0) > 0;
+  const bannerBg     = criticalCount > 0 || hasDebt ? "rgba(239,68,68,0.06)" : "rgba(99,102,241,0.06)";
+  const bannerBorder = criticalCount > 0 || hasDebt ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(99,102,241,0.15)";
 
-  const bannerBorder = criticalCount > 0
-    ? "1px solid rgba(239,68,68,0.2)"
-    : "1px solid rgba(99,102,241,0.15)";
+  const topStage     = top?.insightStage;
+  const topDays      = top?.daysSinceDetectable ?? 0;
+  const stageUrgent  = topStage === "persistent" || topStage === "critical";
 
   return (
     <div style={{
@@ -626,8 +626,21 @@ function ProactiveInsightsBanner({
         <span style={{ fontSize: "12px", color: "var(--muted)", flex: 1, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
           {criticalCount > 0
             ? <><span style={{ color: "var(--status-danger-text)", fontWeight: "600" }}>{criticalCount} gap{criticalCount > 1 ? "s" : ""} crítico{criticalCount > 1 ? "s" : ""}</span> · {top.title}</>
-            : top.title
+            : stageUrgent && topDays > 0
+              ? <><span style={{ color: "var(--status-danger-text)", fontWeight: "600" }}>{topDays}d sin resolver</span> · {top.title}</>
+              : top.title
           }
+        </span>
+      )}
+
+      {/* Debt badge */}
+      {hasDebt && (
+        <span style={{
+          fontSize: "9px", fontWeight: "700", padding: "1px 6px", borderRadius: "99px",
+          background: "var(--status-danger-bg)", color: "var(--status-danger-text)",
+          letterSpacing: "0.04em", flexShrink: 0,
+        }}>
+          {operationalDebtCount} DEUDA
         </span>
       )}
 

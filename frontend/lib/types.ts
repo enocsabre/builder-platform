@@ -271,11 +271,14 @@ export interface IntelligenceSuggestion {
 }
 
 export interface ProactiveInsight {
-  type:     "critical_gap" | "missing_connection" | "gap_warning" | "evolution";
+  type:     "critical_gap" | "missing_connection" | "gap_warning" | "evolution" | "stalled";
   severity: "high" | "medium" | "low";
   title:    string;
   detail:   string;
   action:   string;
+  // Sprint 40
+  daysSinceDetectable: number;
+  insightStage:        "new" | "observed" | "persistent" | "critical";
 }
 
 export interface IntelligenceReport {
@@ -297,6 +300,12 @@ export interface IntelligenceReport {
   healthScoreNumeric:    number;
   criticalCount:         number;
   topInsights:           ProactiveInsight[];
+  // Sprint 40
+  productAgeDays:        number;
+  gapAgeDays:            number;
+  operationalDebtCount:  number;
+  recentModuleCount:     number;
+  pendingRefactorCount:  number;
 }
 
 export interface RefactorRecommendation {

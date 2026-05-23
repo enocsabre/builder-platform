@@ -881,7 +881,10 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
             report.Narrative, report.AnalyzedAt,
             report.HealthScore, report.HealthScoreLabel, report.HealthScoreNumeric,
             report.CriticalCount,
-            report.TopInsights.Select(i => new ProactiveInsightDto(i.Type, i.Severity, i.Title, i.Detail, i.Action)).ToList()
+            report.TopInsights.Select(i => new ProactiveInsightDto(i.Type, i.Severity, i.Title, i.Detail, i.Action, i.DaysSinceDetectable, i.InsightStage)).ToList(),
+            // Sprint 40
+            report.ProductAgeDays, report.GapAgeDays, report.OperationalDebtCount,
+            report.RecentModuleCount, report.PendingRefactorCount
         ));
     }
 

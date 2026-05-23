@@ -82,7 +82,29 @@ function insightTypeIcon(type: string) {
   if (type === "critical_gap")        return "⚠";
   if (type === "missing_connection")  return "⟶";
   if (type === "gap_warning")         return "◎";
+  if (type === "stalled")             return "⏸";
   return "↗";
+}
+
+function insightStageColor(stage: string): string {
+  if (stage === "critical")   return "var(--status-danger-text)";
+  if (stage === "persistent") return "#f97316"; // orange
+  if (stage === "observed")   return "var(--status-warn-text)";
+  return "var(--status-info-text)";
+}
+
+function insightStageBg(stage: string): string {
+  if (stage === "critical")   return "var(--status-danger-bg)";
+  if (stage === "persistent") return "rgba(249,115,22,0.12)";
+  if (stage === "observed")   return "var(--status-warn-bg)";
+  return "var(--status-info-bg)";
+}
+
+function insightStageLabel(stage: string): string {
+  if (stage === "critical")   return "CRÍTICO";
+  if (stage === "persistent") return "PERSISTENTE";
+  if (stage === "observed")   return "OBSERVADO";
+  return "NUEVO";
 }
 
 export function IntelligencePanel({ productId }: Props) {
@@ -160,21 +182,53 @@ export function IntelligencePanel({ productId }: Props) {
             <span style={{ fontSize: "10px", color: "var(--muted)" }}>Maduro</span>
           </div>
         </div>
-        {report.criticalCount > 0 && (
-          <div style={{
-            flexShrink: 0, textAlign: "center",
-            padding: "8px 14px", borderRadius: "10px",
-            background: "var(--status-danger-bg)",
-          }}>
-            <div style={{ fontSize: "20px", fontWeight: "800", color: "var(--status-danger-text)", lineHeight: 1 }}>
-              {report.criticalCount}
+        <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
+          {report.operationalDebtCount > 0 && (
+            <div style={{
+              textAlign: "center",
+              padding: "8px 12px", borderRadius: "10px",
+              background: "var(--status-danger-bg)",
+            }}>
+              <div style={{ fontSize: "18px", fontWeight: "800", color: "var(--status-danger-text)", lineHeight: 1 }}>
+                {report.operationalDebtCount}
+              </div>
+              <div style={{ fontSize: "8px", fontWeight: "700", color: "var(--status-danger-text)", marginTop: "2px", letterSpacing: "0.04em" }}>
+                DEUDA
+              </div>
             </div>
-            <div style={{ fontSize: "9px", fontWeight: "700", color: "var(--status-danger-text)", marginTop: "2px", letterSpacing: "0.04em" }}>
-              CRÍTICO{report.criticalCount !== 1 ? "S" : ""}
+          )}
+          {report.criticalCount > 0 && (
+            <div style={{
+              textAlign: "center",
+              padding: "8px 12px", borderRadius: "10px",
+              background: "var(--status-danger-bg)",
+            }}>
+              <div style={{ fontSize: "18px", fontWeight: "800", color: "var(--status-danger-text)", lineHeight: 1 }}>
+                {report.criticalCount}
+              </div>
+              <div style={{ fontSize: "8px", fontWeight: "700", color: "var(--status-danger-text)", marginTop: "2px", letterSpacing: "0.04em" }}>
+                CRÍTICO{report.criticalCount !== 1 ? "S" : ""}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+
+      {/* ── Temporal Context Strip ────────────────────────────────────────── */}
+      {(report.productAgeDays > 0 || report.recentModuleCount > 0 || report.pendingRefactorCount > 0) && (
+        <div style={{
+          display: "flex", gap: "8px", flexWrap: "wrap",
+        }}>
+          <TemporalChip label="Edad del producto" value={`${report.productAgeDays}d`} />
+          <TemporalChip label="Módulos esta semana" value={`+${report.recentModuleCount}`} highlight={report.recentModuleCount === 0 && report.productAgeDays > 14} />
+          {report.pendingRefactorCount > 0 && (
+            <TemporalChip label="Refactors pendientes" value={`${report.pendingRefactorCount}`} highlight />
+          )}
+          {report.gapAgeDays > 0 && (
+            <TemporalChip label="Gaps detectables hace" value={`${report.gapAgeDays}d`} highlight={report.gapAgeDays > 14} />
+          )}
+        </div>
+      )}
 
       {/* ── Top Proactive Insights ────────────────────────────────────────── */}
       {report.topInsights.length > 0 && (
@@ -300,7 +354,7 @@ export function IntelligencePanel({ productId }: Props) {
 
       {/* ── Footer meta ──────────────────────────────────────────────────────── */}
       <div style={{ fontSize: "10px", color: "var(--muted)", opacity: 0.5, paddingTop: "4px" }}>
-        Análisis generado · {new Date(report.analyzedAt).toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" })} · Builder Intelligence Engine — Sprint 38
+        Análisis generado · {new Date(report.analyzedAt).toLocaleTimeString("es-CR", { hour: "2-digit", minute: "2-digit" })} · Builder Intelligence Engine — Sprint 40
       </div>
     </div>
   );
@@ -410,6 +464,9 @@ function ProactiveInsightCard({ insight }: { insight: ProactiveInsight }) {
     ? "var(--status-danger-text)22"
     : isMedium ? "var(--status-warn-text)22" : "var(--border)";
 
+  const stage = insight.insightStage ?? "new";
+  const days  = insight.daysSinceDetectable ?? 0;
+
   return (
     <div style={{
       padding: "10px 14px", borderRadius: "8px",
@@ -425,7 +482,7 @@ function ProactiveInsightCard({ insight }: { insight: ProactiveInsight }) {
         {insightTypeIcon(insight.type)}
       </span>
       <div style={{ flex: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "2px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px", flexWrap: "wrap" }}>
           <span style={{ fontSize: "12px", fontWeight: "700", color: "var(--foreground)" }}>
             {insight.title}
           </span>
@@ -437,14 +494,45 @@ function ProactiveInsightCard({ insight }: { insight: ProactiveInsight }) {
           }}>
             {insight.severity.toUpperCase()}
           </span>
+          <span style={{
+            fontSize: "9px", fontWeight: "700", padding: "1px 6px", borderRadius: "99px",
+            background: insightStageBg(stage),
+            color: insightStageColor(stage),
+            letterSpacing: "0.04em",
+          }}>
+            {insightStageLabel(stage)}
+          </span>
         </div>
         <div style={{ fontSize: "11px", color: "var(--muted)", lineHeight: "1.5", marginBottom: "3px" }}>
           {insight.detail}
         </div>
-        <div style={{ fontSize: "10px", fontWeight: "600", color: insightSeverityColor(insight.severity), opacity: 0.85 }}>
-          → {insight.action}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "4px" }}>
+          <div style={{ fontSize: "10px", fontWeight: "600", color: insightSeverityColor(insight.severity), opacity: 0.85 }}>
+            → {insight.action}
+          </div>
+          {days > 0 && (
+            <div style={{ fontSize: "9px", color: insightStageColor(stage), opacity: 0.8, fontWeight: "600" }}>
+              {days}d sin resolver
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function TemporalChip({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: "5px",
+      padding: "4px 10px", borderRadius: "99px",
+      background: highlight ? "var(--status-warn-bg)" : "var(--surface)",
+      border: `1px solid ${highlight ? "var(--status-warn-text)22" : "var(--border)"}`,
+    }}>
+      <span style={{ fontSize: "9px", color: "var(--muted)", fontWeight: "500" }}>{label}</span>
+      <span style={{ fontSize: "10px", fontWeight: "700", color: highlight ? "var(--status-warn-text)" : "var(--foreground)" }}>
+        {value}
+      </span>
     </div>
   );
 }

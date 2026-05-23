@@ -28,11 +28,14 @@ public record IntelligenceSuggestion(
 );
 
 public record ProactiveInsight(
-    string Type,      // "critical_gap" | "missing_connection" | "evolution"
+    string Type,      // "critical_gap" | "missing_connection" | "gap_warning" | "evolution" | "stalled"
     string Severity,  // "high" | "medium" | "low"
     string Title,
     string Detail,
-    string Action
+    string Action,
+    // Sprint 40: Temporal context
+    int    DaysSinceDetectable,   // how many days this issue has been knowable
+    string InsightStage           // "new"|"observed"|"persistent"|"critical"
 );
 
 public record IntelligenceReport(
@@ -49,11 +52,17 @@ public record IntelligenceReport(
     string                       Narrative,
     DateTime                     AnalyzedAt,
     // ── Sprint 39: Proactive Intelligence ─────────────────────────────────────
-    string                       HealthScore,        // "starter"|"operational"|"growing"|"mature"
-    string                       HealthScoreLabel,   // "Inicial"|"Operacional"|"Creciendo"|"Maduro"
-    int                          HealthScoreNumeric, // 0-100
-    int                          CriticalCount,      // high-severity gap count
-    List<ProactiveInsight>       TopInsights         // max 4 actionable items
+    string                       HealthScore,
+    string                       HealthScoreLabel,
+    int                          HealthScoreNumeric,
+    int                          CriticalCount,
+    List<ProactiveInsight>       TopInsights,
+    // ── Sprint 40: Temporal Intelligence ──────────────────────────────────────
+    int                          ProductAgeDays,
+    int                          GapAgeDays,         // days since first module appeared (gap baseline)
+    int                          OperationalDebtCount,  // insights with stage persistent|critical
+    int                          RecentModuleCount,  // modules added in last 7 days
+    int                          PendingRefactorCount
 );
 
 // ── Engine ────────────────────────────────────────────────────────────────────
@@ -393,11 +402,37 @@ public class ProductIntelligenceEngine
 
     // ── Analysis ──────────────────────────────────────────────────────────────
 
+    // Returns "new"|"observed"|"persistent"|"critical" based on how long a gap has been detectable
+    private static string InsightStageFromDays(int days) => days switch
+    {
+        < 3  => "new",
+        < 14 => "observed",
+        < 30 => "persistent",
+        _    => "critical"
+    };
+
+    // Priority for sorting: critical=0, persistent=1, observed=2, new=3
+    private static int StagePriority(string stage) => stage switch
+    {
+        "critical"   => 0,
+        "persistent" => 1,
+        "observed"   => 2,
+        _            => 3,
+    };
+
+    private static int SeverityPriority(string sev) => sev switch
+    {
+        "high"   => 0,
+        "medium" => 1,
+        _        => 2,
+    };
+
     public async Task<IntelligenceReport> AnalyzeAsync(Guid productId, AppDbContext db, CancellationToken ct)
     {
         var product = await db.Products
             .Include(p => p.Modules.Where(m => m.IsActive))
             .Include(p => p.Memory)
+            .Include(p => p.RefactorRecommendations)
             .FirstOrDefaultAsync(p => p.Id == productId, ct);
 
         if (product is null)
@@ -505,47 +540,95 @@ public class ProductIntelligenceEngine
             _     => ("starter",     "Inicial"),
         };
 
-        // ── Proactive Insights (top 4, highest severity first) ────────────────
+        // ── Sprint 40: Temporal context ───────────────────────────────────────
+        var productAgeDays    = (int)(DateTime.UtcNow - product.CreatedAt).TotalDays;
+        var oldestModule      = product.Modules.OrderBy(m => m.DetectedAt).FirstOrDefault();
+        var gapBaseline       = oldestModule?.DetectedAt ?? product.CreatedAt;
+        var gapAgeDays        = Math.Max(0, (int)(DateTime.UtcNow - gapBaseline).TotalDays);
+        var recentModuleCount = product.Modules.Count(m => m.DetectedAt > DateTime.UtcNow.AddDays(-7));
+        var pendingRefactors  = product.RefactorRecommendations.Count(r => r.Status == "pending");
+
+        // ── Proactive Insights with temporal stage ────────────────────────────
         var topInsights = new List<ProactiveInsight>();
 
         foreach (var gap in gaps.Where(g => g.Priority == "high").Take(2))
+        {
+            var stage40 = InsightStageFromDays(gapAgeDays);
             topInsights.Add(new ProactiveInsight(
-                Type:     "critical_gap",
-                Severity: "high",
-                Title:    $"Falta {gap.Module}",
-                Detail:   gap.Reason,
-                Action:   $"Agregar {gap.Module}"
+                Type:                "critical_gap",
+                Severity:            "high",
+                Title:               $"Falta {gap.Module}",
+                Detail:              gap.Reason,
+                Action:              $"Agregar {gap.Module}",
+                DaysSinceDetectable: gapAgeDays,
+                InsightStage:        stage40
             ));
+        }
 
         foreach (var conn in connections.Where(c => !c.Detected && c.Impact != "").Take(2))
+        {
+            var stage40 = InsightStageFromDays(gapAgeDays);
             topInsights.Add(new ProactiveInsight(
-                Type:     "missing_connection",
-                Severity: "medium",
-                Title:    $"{conn.From} desconectado de {conn.To}",
-                Detail:   conn.Label,
-                Action:   $"Conectar {conn.From} → {conn.To}"
+                Type:                "missing_connection",
+                Severity:            "medium",
+                Title:               $"{conn.From} desconectado de {conn.To}",
+                Detail:              conn.Label,
+                Action:              $"Conectar {conn.From} → {conn.To}",
+                DaysSinceDetectable: gapAgeDays,
+                InsightStage:        stage40
             ));
+        }
 
         foreach (var gap in gaps.Where(g => g.Priority == "medium").Take(1))
         {
             if (topInsights.Count < 3)
+            {
+                var stage40 = InsightStageFromDays(gapAgeDays);
                 topInsights.Add(new ProactiveInsight(
-                    Type:     "gap_warning",
-                    Severity: "medium",
-                    Title:    $"Se recomienda {gap.Module}",
-                    Detail:   gap.Reason,
-                    Action:   $"Agregar {gap.Module}"
+                    Type:                "gap_warning",
+                    Severity:            "medium",
+                    Title:               $"Se recomienda {gap.Module}",
+                    Detail:              gap.Reason,
+                    Action:              $"Agregar {gap.Module}",
+                    DaysSinceDetectable: gapAgeDays,
+                    InsightStage:        stage40
                 ));
+            }
+        }
+
+        // Stalled evolution: product old, no recent modules, low module count
+        if (recentModuleCount == 0 && productAgeDays > 14 && moduleCount < 5)
+        {
+            topInsights.Add(new ProactiveInsight(
+                Type:                "stalled",
+                Severity:            "medium",
+                Title:               "Evolución detenida",
+                Detail:              $"Sin nuevos módulos en {productAgeDays} días — el producto no está creciendo operacionalmente",
+                Action:              "Agregar módulos o funcionalidades vía chat",
+                DaysSinceDetectable: productAgeDays,
+                InsightStage:        InsightStageFromDays(productAgeDays)
+            ));
         }
 
         if (topInsights.Count < 2 && !string.IsNullOrEmpty(milestone))
             topInsights.Add(new ProactiveInsight(
-                Type:     "evolution",
-                Severity: "low",
-                Title:    "Próximo hito operacional",
-                Detail:   milestone,
-                Action:   milestone
+                Type:                "evolution",
+                Severity:            "low",
+                Title:               "Próximo hito operacional",
+                Detail:              milestone,
+                Action:              milestone,
+                DaysSinceDetectable: productAgeDays,
+                InsightStage:        InsightStageFromDays(productAgeDays)
             ));
+
+        // Sort: temporal urgency first (stage × 10 + severity), then take top 4
+        topInsights = topInsights
+            .OrderBy(i => StagePriority(i.InsightStage) * 10 + SeverityPriority(i.Severity))
+            .Take(4)
+            .ToList();
+
+        var operationalDebtCount = topInsights.Count(i =>
+            i.InsightStage is "persistent" or "critical");
 
         return new IntelligenceReport(
             ProductId:             productId.ToString(),
@@ -564,7 +647,12 @@ public class ProductIntelligenceEngine
             HealthScoreLabel:      healthLabel,
             HealthScoreNumeric:    healthNumeric,
             CriticalCount:         highGapCount,
-            TopInsights:           topInsights
+            TopInsights:           topInsights,
+            ProductAgeDays:        productAgeDays,
+            GapAgeDays:            gapAgeDays,
+            OperationalDebtCount:  operationalDebtCount,
+            RecentModuleCount:     recentModuleCount,
+            PendingRefactorCount:  pendingRefactors
         );
     }
 
@@ -575,5 +663,6 @@ public class ProductIntelligenceEngine
         new(productId.ToString(), "general", "General", 0, "starter", "SaaS Inicial",
             "Agregar módulos base al sistema", [], [], [],
             "El sistema está en fase inicial.", DateTime.UtcNow,
-            "starter", "Inicial", 0, 0, []);
+            "starter", "Inicial", 0, 0, [],
+            0, 0, 0, 0, 0);
 }
