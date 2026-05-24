@@ -342,6 +342,55 @@ export interface StrategicRoadmap {
   generatedAt:          string;
 }
 
+// ── Organizational Intelligence types (Sprint 44) ─────────────────────────────
+
+export interface OwnershipGap {
+  area:           string;
+  description:    string;
+  risk:           string;
+  severity:       "critical" | "high" | "medium";
+  suggestedOwner: string;
+}
+
+export interface HumanBottleneck {
+  title:         string;
+  description:   string;
+  concentration: string;
+  collapseRisk:  string;
+  severity:      "critical" | "high" | "medium";
+}
+
+export interface RoleSuggestion {
+  roleTitle:       string;
+  responsibilities:string;
+  priority:        "immediate" | "soon" | "later";
+  businessCase:    string;
+}
+
+export interface DelegationOpportunity {
+  title:          string;
+  currentState:   string;
+  delegationPath: string;
+  impact:         string;
+}
+
+export interface OrgReport {
+  productId:                 string;
+  industry:                  string;
+  industryLabel:             string;
+  orgMaturityScore:          number;
+  orgMaturityTier:           "founder-operated" | "partially-delegated" | "structured" | "scalable";
+  orgMaturityLabel:          string;
+  orgNarrative:              string;
+  topConcernTitle:           string;
+  topConcernDescription:     string;
+  ownershipGaps:             OwnershipGap[];
+  humanBottlenecks:          HumanBottleneck[];
+  roleSuggestions:           RoleSuggestion[];
+  topDelegationOpportunities:DelegationOpportunity[];
+  analyzedAt:                string;
+}
+
 // ── Capacity Intelligence types (Sprint 43) ───────────────────────────────────
 
 export interface SaturationPoint {

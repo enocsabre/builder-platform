@@ -951,6 +951,29 @@ public class ProductsController(AppDbContext db, RuntimeOrchestrator orchestrato
         ));
     }
 
+    // GET /api/products/{id}/org-intelligence
+    [HttpGet("{id:guid}/org-intelligence")]
+    public async Task<ActionResult<OrgReportDto>> GetOrgIntelligence(
+        Guid id, [FromServices] ProductOrgIntelligenceEngine orgEngine, CancellationToken ct)
+    {
+        if (!await OwnsProduct(id)) return NotFound();
+        var report = await orgEngine.AnalyzeAsync(id, db, ct);
+        return Ok(new OrgReportDto(
+            report.ProductId, report.Industry, report.IndustryLabel,
+            report.OrgMaturityScore, report.OrgMaturityTier, report.OrgMaturityLabel,
+            report.OrgNarrative, report.TopConcernTitle, report.TopConcernDescription,
+            report.OwnershipGaps.Select(g => new OwnershipGapDto(
+                g.Area, g.Description, g.Risk, g.Severity, g.SuggestedOwner)).ToList(),
+            report.HumanBottlenecks.Select(b => new HumanBottleneckDto(
+                b.Title, b.Description, b.Concentration, b.CollapseRisk, b.Severity)).ToList(),
+            report.RoleSuggestions.Select(r => new RoleSuggestionDto(
+                r.RoleTitle, r.Responsibilities, r.Priority, r.BusinessCase)).ToList(),
+            report.TopDelegationOpportunities.Select(d => new DelegationOpportunityDto(
+                d.Title, d.CurrentState, d.DelegationPath, d.Impact)).ToList(),
+            report.AnalyzedAt
+        ));
+    }
+
     // GET /api/products/{id}/events  — SSE stream (anonymous: EventSource can't send headers)
     [HttpGet("{id:guid}/events")]
     [AllowAnonymous]
